@@ -31,8 +31,6 @@
 6. 确认窗口显示 `SimulationManifest=Refreshed` 和 `BundleBuild=Skipped`。
 7. 打开 `Assets/Scenes/main.unity`，点击 Play。
 
-配置脚本只刷新 `DefaultPackage` 与 `JxqyPackage` 的 YooAsset 编辑器模拟清单，不构建真实 AssetBundle、不生成 `StreamingAssets`，也不打包玩家程序。
-
 ## 致谢
 
 衷心感谢以下开源项目与前人的探索，为这个复刻工程提供了宝贵的技术基础和实现参考：
