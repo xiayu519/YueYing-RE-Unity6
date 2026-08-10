@@ -1,0 +1,952 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTML to UGUI JSON Baker</title>
+    <style>
+        :root {
+            --bg: #0b0f14;
+            --bg-elevated: #101720;
+            --surface: #151d28;
+            --surface-strong: #1b2532;
+            --surface-soft: #0f151d;
+            --border: #273244;
+            --border-strong: #3a4658;
+            --text: #e6edf3;
+            --text-muted: #8da2b6;
+            --text-subtle: #66788c;
+            --blue: #2f81f7;
+            --blue-strong: #1f6feb;
+            --green: #2ea043;
+            --green-strong: #238636;
+            --amber: #d29922;
+            --red: #f85149;
+            --shadow: 0 18px 50px rgba(0, 0, 0, 0.36);
+            --radius: 8px;
+            --mono: "Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace;
+            --ui: "Segoe UI Variable", "Segoe UI", Arial, sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            height: 100%;
+        }
+
+        body {
+            margin: 0;
+            overflow: hidden;
+            color: var(--text);
+            background:
+                linear-gradient(180deg, rgba(47, 129, 247, 0.08) 0, rgba(11, 15, 20, 0) 280px),
+                var(--bg);
+            font-family: var(--ui);
+            letter-spacing: 0;
+        }
+
+        button,
+        textarea {
+            font: inherit;
+        }
+
+        button {
+            border: 0;
+        }
+
+        .app-shell {
+            display: grid;
+            grid-template-rows: auto minmax(0, 1fr) auto;
+            height: 100vh;
+            padding: 14px;
+            gap: 12px;
+        }
+
+        .toolbar {
+            display: grid;
+            grid-template-columns: minmax(300px, 1fr) auto auto;
+            align-items: center;
+            gap: 18px;
+            padding: 14px 16px;
+            background: rgba(16, 23, 32, 0.94);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(18px);
+        }
+
+        .brand-block {
+            display: flex;
+            align-items: center;
+            min-width: 0;
+            gap: 12px;
+        }
+
+        .brand-mark {
+            display: grid;
+            width: 40px;
+            height: 40px;
+            flex: 0 0 auto;
+            place-items: center;
+            color: #ffffff;
+            background: linear-gradient(135deg, var(--blue), #36c5f0 58%, var(--green));
+            border-radius: var(--radius);
+            box-shadow: 0 10px 28px rgba(47, 129, 247, 0.28);
+        }
+
+        .brand-mark svg,
+        .btn svg,
+        .empty-state svg {
+            width: 20px;
+            height: 20px;
+            stroke: currentColor;
+            stroke-width: 2;
+            fill: none;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .toolbar-kicker,
+        .panel-kicker {
+            display: block;
+            margin-bottom: 3px;
+            color: var(--text-subtle);
+            font-size: 11px;
+            font-weight: 700;
+            line-height: 1;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .toolbar-title {
+            margin: 0;
+            overflow: hidden;
+            color: var(--text);
+            font-size: 18px;
+            font-weight: 750;
+            line-height: 1.2;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            letter-spacing: 0;
+        }
+
+        .toolbar-meta,
+        .toolbar-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
+        .toolbar-meta {
+            color: var(--text-muted);
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .status-pill,
+        .metric-pill,
+        .scale-chip,
+        .panel-badge {
+            display: inline-flex;
+            align-items: center;
+            min-height: 28px;
+            padding: 0 10px;
+            color: var(--text-muted);
+            background: rgba(21, 29, 40, 0.88);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 650;
+            line-height: 1;
+        }
+
+        .status-pill {
+            color: #c7f0cf;
+            border-color: rgba(46, 160, 67, 0.34);
+            background: rgba(46, 160, 67, 0.12);
+        }
+
+        .status-dot {
+            width: 7px;
+            height: 7px;
+            margin-right: 7px;
+            background: var(--green);
+            border-radius: 999px;
+            box-shadow: 0 0 0 3px rgba(46, 160, 67, 0.14);
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 38px;
+            gap: 8px;
+            padding: 0 14px;
+            color: var(--text);
+            background: var(--surface-strong);
+            border: 1px solid var(--border-strong);
+            border-radius: 7px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 750;
+            line-height: 1;
+            transition: background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease, color 180ms ease;
+        }
+
+        .btn:hover {
+            border-color: rgba(47, 129, 247, 0.62);
+            background: #223044;
+            box-shadow: 0 0 0 3px rgba(47, 129, 247, 0.12);
+        }
+
+        .btn:focus-visible,
+        textarea:focus-visible {
+            outline: 2px solid rgba(47, 129, 247, 0.92);
+            outline-offset: 2px;
+        }
+
+        .btn-primary {
+            color: #ffffff;
+            background: var(--green);
+            border-color: rgba(88, 166, 92, 0.66);
+        }
+
+        .btn-primary:hover,
+        .btn-primary.is-complete {
+            border-color: rgba(86, 211, 100, 0.72);
+            background: var(--green-strong);
+            box-shadow: 0 0 0 3px rgba(46, 160, 67, 0.16);
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: minmax(360px, 0.92fr) minmax(460px, 1.08fr);
+            min-height: 0;
+            gap: 12px;
+        }
+
+        .panel-left,
+        .panel-right {
+            min-width: 0;
+            min-height: 0;
+        }
+
+        .panel,
+        .panel-right {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+
+        .panel {
+            overflow: hidden;
+            background: rgba(16, 23, 32, 0.92);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: 0 10px 34px rgba(0, 0, 0, 0.24);
+        }
+
+        .panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            min-height: 50px;
+            gap: 12px;
+            padding: 10px 12px 10px 14px;
+            color: var(--text);
+            background: linear-gradient(180deg, rgba(27, 37, 50, 0.96), rgba(21, 29, 40, 0.96));
+            border-bottom: 1px solid var(--border);
+            font-size: 13px;
+            font-weight: 750;
+        }
+
+        .panel-title {
+            min-width: 0;
+        }
+
+        .panel-title strong {
+            display: block;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .panel-actions {
+            display: flex;
+            align-items: center;
+            flex: 0 0 auto;
+            gap: 8px;
+        }
+
+        .editor-panel {
+            height: 100%;
+        }
+
+        .panel-right {
+            gap: 12px;
+        }
+
+        .preview-panel {
+            flex: 6 1 0;
+        }
+
+        .json-output-container {
+            flex: 4 1 0;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 0;
+            flex: 1;
+            resize: none;
+            color: #d7e2ee;
+            background: var(--surface-soft);
+            border: 0;
+            outline: 0;
+            padding: 16px;
+            font-family: var(--mono);
+            font-size: 13px;
+            line-height: 1.58;
+            tab-size: 4;
+        }
+
+        textarea::placeholder {
+            color: #5e7186;
+        }
+
+        textarea::selection {
+            color: #ffffff;
+            background: rgba(47, 129, 247, 0.42);
+        }
+
+        #json-output {
+            color: #f0c6a6;
+            background: #0e141b;
+        }
+
+        #preview-container {
+            position: relative;
+            display: flex;
+            flex: 1;
+            align-items: center;
+            justify-content: center;
+            min-height: 0;
+            overflow: hidden;
+            background:
+                linear-gradient(rgba(141, 162, 182, 0.055) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(141, 162, 182, 0.055) 1px, transparent 1px),
+                radial-gradient(circle at center, rgba(47, 129, 247, 0.12), rgba(11, 15, 20, 0) 62%),
+                #0d131a;
+            background-size: 28px 28px, 28px 28px, auto, auto;
+        }
+
+        #preview-container::before {
+            position: absolute;
+            inset: 0;
+            border: 1px solid rgba(255, 255, 255, 0.03);
+            content: "";
+            pointer-events: none;
+        }
+
+        #canvas-sandbox {
+            position: relative;
+            z-index: 1;
+            background-color: #ffffff;
+            box-shadow: 0 24px 80px rgba(0, 0, 0, 0.52), 0 0 0 1px rgba(230, 237, 243, 0.18);
+            transform-origin: center center;
+        }
+
+        #canvas-sandbox.is-empty {
+            box-shadow: none;
+        }
+
+        #canvas-sandbox * {
+            box-sizing: border-box !important;
+        }
+
+        #canvas-sandbox [data-u-type] {
+            min-width: 0;
+            min-height: 0;
+        }
+
+        .empty-state {
+            position: absolute;
+            z-index: 0;
+            display: grid;
+            place-items: center;
+            width: min(360px, 80%);
+            color: var(--text-muted);
+            text-align: center;
+            pointer-events: none;
+        }
+
+        .empty-state svg {
+            width: 34px;
+            height: 34px;
+            margin-bottom: 12px;
+            color: var(--blue);
+        }
+
+        .empty-state-title {
+            color: var(--text);
+            font-size: 15px;
+            font-weight: 750;
+            line-height: 1.4;
+        }
+
+        .empty-state-copy {
+            margin-top: 6px;
+            color: var(--text-subtle);
+            font-size: 12px;
+            line-height: 1.55;
+        }
+
+        .empty-state.is-hidden {
+            display: none;
+        }
+
+        .statusbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            min-height: 34px;
+            padding: 0 12px;
+            color: var(--text-muted);
+            background: rgba(16, 23, 32, 0.82);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            font-size: 12px;
+        }
+
+        .statusbar-left,
+        .statusbar-right {
+            display: inline-flex;
+            align-items: center;
+            min-width: 0;
+            gap: 14px;
+        }
+
+        #status-text {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        body[data-status="success"] #status-text {
+            color: #c7f0cf;
+        }
+
+        body[data-status="warning"] #status-text {
+            color: #f7d795;
+        }
+
+        body[data-status="error"] #status-text {
+            color: #ffb3ae;
+        }
+
+        ::-webkit-scrollbar {
+            width: 12px;
+            height: 12px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #0d131a;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #2b3748;
+            border: 3px solid #0d131a;
+            border-radius: 999px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #3b4b61;
+        }
+
+        @media (max-width: 1180px) {
+            .toolbar {
+                grid-template-columns: minmax(280px, 1fr) auto;
+            }
+
+            .toolbar-meta {
+                display: none;
+            }
+
+            .main-content {
+                grid-template-columns: minmax(320px, 0.9fr) minmax(380px, 1.1fr);
+            }
+        }
+
+        @media (max-width: 900px) {
+            body {
+                overflow: auto;
+            }
+
+            .app-shell {
+                min-height: 100vh;
+                height: auto;
+            }
+
+            .toolbar,
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+
+            .toolbar-actions {
+                justify-content: stretch;
+            }
+
+            .btn {
+                flex: 1 1 180px;
+            }
+
+            .main-content {
+                min-height: 960px;
+            }
+
+            .editor-panel,
+            .panel-right {
+                min-height: 460px;
+            }
+
+            .statusbar {
+                align-items: flex-start;
+                flex-direction: column;
+                height: auto;
+                gap: 6px;
+                padding: 9px 12px;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *,
+            *::before,
+            *::after {
+                scroll-behavior: auto !important;
+                transition-duration: 0.01ms !important;
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+            }
+        }
+    </style>
+</head>
+<body data-status="idle">
+<div class="app-shell">
+    <header class="toolbar">
+        <div class="brand-block">
+            <div class="brand-mark" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                    <path d="M8 4 3 9l5 5"></path>
+                    <path d="m16 4 5 5-5 5"></path>
+                    <path d="m14 3-4 18"></path>
+                </svg>
+            </div>
+            <div>
+                <span class="toolbar-kicker">HtmlToUGUI Pipeline</span>
+                <h1 class="toolbar-title">HTML to UGUI JSON Baker</h1>
+            </div>
+        </div>
+
+        <div class="toolbar-meta" aria-label="Baker metadata">
+            <span class="status-pill"><span class="status-dot"></span>Schema v2</span>
+            <span class="metric-pill" id="node-count">0 节点</span>
+            <span class="metric-pill" id="canvas-size-info">Canvas: --</span>
+        </div>
+
+        <div class="toolbar-actions">
+            <button class="btn btn-secondary" type="button" onclick="renderAndFit()">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+                <span class="btn-label">预览</span>
+            </button>
+            <button id="btn-bake-copy" class="btn btn-primary" type="button" onclick="bakeAndCopyJSON()">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="9" y="9" width="13" height="13" rx="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+                <span class="btn-label">烘焙并复制 JSON</span>
+            </button>
+        </div>
+    </header>
+
+    <main class="main-content">
+        <section class="panel panel-left editor-panel" aria-label="UI-DSL HTML 输入">
+            <div class="panel-header">
+                <div class="panel-title">
+                    <span class="panel-kicker">Source</span>
+                    <strong>UI-DSL HTML 输入</strong>
+                </div>
+                <span class="panel-badge" id="editor-metrics">0 行</span>
+            </div>
+            <textarea id="code-editor" spellcheck="false" placeholder="粘贴带 data-u-name 和 data-u-type 的 HTML..."></textarea>
+        </section>
+
+        <div class="panel-right">
+            <section class="panel preview-panel" aria-label="UGUI 预览">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <span class="panel-kicker">Preview</span>
+                        <strong>UGUI 坐标预览</strong>
+                    </div>
+                    <div class="panel-actions">
+                        <span class="scale-chip" id="scale-info">Scale: 100%</span>
+                    </div>
+                </div>
+                <div id="preview-container">
+                    <div class="empty-state" id="preview-empty" aria-hidden="true">
+                        <div>
+                            <svg viewBox="0 0 24 24">
+                                <rect x="3" y="4" width="18" height="14" rx="2"></rect>
+                                <path d="M8 21h8"></path>
+                                <path d="M12 18v3"></path>
+                                <path d="M7 9h10"></path>
+                                <path d="M7 13h6"></path>
+                            </svg>
+                            <div class="empty-state-title">等待预览内容</div>
+                            <div class="empty-state-copy">输入 HTML 后执行预览或烘焙。</div>
+                        </div>
+                    </div>
+                    <div id="canvas-sandbox" class="is-empty"></div>
+                </div>
+            </section>
+
+            <section class="panel json-output-container" aria-label="JSON 输出">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <span class="panel-kicker">Output</span>
+                        <strong>JSON 输出</strong>
+                    </div>
+                    <span class="panel-badge">Copy Ready</span>
+                </div>
+                <textarea id="json-output" readonly spellcheck="false"></textarea>
+            </section>
+        </div>
+    </main>
+
+    <footer class="statusbar">
+        <div class="statusbar-left">
+            <span id="status-text" aria-live="polite">Ready</span>
+        </div>
+        <div class="statusbar-right">
+            <span>Coordinate Baker</span>
+            <span>v2 Smart Prefab</span>
+        </div>
+    </footer>
+</div>
+
+<script>
+    let currentScale = 1.0;
+
+    const editor = document.getElementById('code-editor');
+    editor.addEventListener('input', refreshEditorMetrics);
+    refreshEditorMetrics();
+    syncPreviewState();
+
+    function renderAndFit() {
+        const code = editor.value;
+        const sandbox = document.getElementById('canvas-sandbox');
+        sandbox.innerHTML = code;
+
+        const rootNode = sandbox.querySelector('[data-u-type]');
+        if (rootNode) {
+            const rootStyle = window.getComputedStyle(rootNode);
+            sandbox.style.width = rootNode.style.width || rootStyle.width;
+            sandbox.style.height = rootNode.style.height || rootStyle.height;
+            setStatus('预览已更新', 'success');
+        } else {
+            sandbox.style.width = '';
+            sandbox.style.height = '';
+            currentScale = 1.0;
+            sandbox.style.transform = '';
+            document.getElementById('scale-info').innerText = 'Scale: 100%';
+            setStatus(code.trim() ? '未检测到 data-u-type 根节点' : '等待输入 HTML', code.trim() ? 'warning' : 'idle');
+        }
+
+        syncPreviewState();
+        refreshPreviewMetrics();
+        fitPreviewScale();
+    }
+
+    function fitPreviewScale() {
+        const container = document.getElementById('preview-container');
+        const sandbox = document.getElementById('canvas-sandbox');
+        if (!sandbox.style.width) return;
+
+        const sandboxWidth = parseFloat(sandbox.style.width);
+        const sandboxHeight = parseFloat(sandbox.style.height);
+        if (!sandboxWidth || !sandboxHeight) return;
+
+        const scaleX = (container.clientWidth - 56) / sandboxWidth;
+        const scaleY = (container.clientHeight - 56) / sandboxHeight;
+        currentScale = Math.min(scaleX, scaleY, 1.0);
+        sandbox.style.transform = `scale(${currentScale})`;
+        document.getElementById('scale-info').innerText = `Scale: ${Math.round(currentScale * 100)}%`;
+        refreshPreviewMetrics();
+    }
+
+    window.addEventListener('resize', () => {
+        if (document.getElementById('canvas-sandbox').innerHTML.trim() !== '') {
+            fitPreviewScale();
+        }
+    });
+
+    function bakeAndCopyJSON() {
+        renderAndFit();
+
+        const sandbox = document.getElementById('canvas-sandbox');
+        const rootElement = sandbox.querySelector('[data-u-name]');
+        if (!rootElement) {
+            setStatus('未找到包含 data-u-name 的根节点', 'error');
+            alert('未找到包含 data-u-name 的根节点。');
+            return;
+        }
+
+        const rootRect = unscaledRect(rootElement);
+        const uiData = traverseAndBake(rootElement, rootRect, unscaledRect(sandbox));
+        uiData.schemaVersion = 2;
+        uiData.designWidth = Math.round(parseFloat(sandbox.style.width) || rootRect.width);
+        uiData.designHeight = Math.round(parseFloat(sandbox.style.height) || rootRect.height);
+
+        const jsonOutput = document.getElementById('json-output');
+        jsonOutput.value = JSON.stringify(uiData, null, 2);
+        jsonOutput.select();
+        document.execCommand('copy');
+        window.getSelection().removeAllRanges();
+
+        const btn = document.getElementById('btn-bake-copy');
+        const btnLabel = btn.querySelector('.btn-label');
+        const originalText = btnLabel ? btnLabel.innerText : btn.innerText;
+        if (btnLabel) {
+            btnLabel.innerText = '已烘焙并复制';
+        } else {
+            btn.innerText = '已烘焙并复制';
+        }
+        btn.classList.add('is-complete');
+        setStatus(`已输出 ${uiData.designWidth} x ${uiData.designHeight} JSON`, 'success');
+        setTimeout(() => {
+            if (btnLabel) {
+                btnLabel.innerText = originalText;
+            } else {
+                btn.innerText = originalText;
+            }
+            btn.classList.remove('is-complete');
+        }, 2000);
+    }
+
+    function syncPreviewState() {
+        const sandbox = document.getElementById('canvas-sandbox');
+        const empty = document.getElementById('preview-empty');
+        const hasPreview = sandbox.innerHTML.trim() !== '';
+        sandbox.classList.toggle('is-empty', !hasPreview);
+        empty.classList.toggle('is-hidden', hasPreview);
+    }
+
+    function refreshEditorMetrics() {
+        const metrics = document.getElementById('editor-metrics');
+        const value = editor.value;
+        const lines = value ? value.split(/\r\n|\r|\n/).length : 0;
+        metrics.innerText = `${lines} 行`;
+    }
+
+    function refreshPreviewMetrics() {
+        const sandbox = document.getElementById('canvas-sandbox');
+        const nodeCount = sandbox.querySelectorAll('[data-u-type][data-u-name]').length;
+        const width = Math.round(parseFloat(sandbox.style.width) || 0);
+        const height = Math.round(parseFloat(sandbox.style.height) || 0);
+        document.getElementById('node-count').innerText = `${nodeCount} 节点`;
+        document.getElementById('canvas-size-info').innerText = width && height ? `Canvas: ${width} x ${height}` : 'Canvas: --';
+    }
+
+    function setStatus(message, status) {
+        document.body.dataset.status = status || 'idle';
+        document.getElementById('status-text').innerText = message;
+    }
+
+    function unscaledRect(element) {
+        const rect = element.getBoundingClientRect();
+        return {
+            left: rect.left / currentScale,
+            top: rect.top / currentScale,
+            right: rect.right / currentScale,
+            bottom: rect.bottom / currentScale,
+            width: rect.width / currentScale,
+            height: rect.height / currentScale
+        };
+    }
+
+    function traverseAndBake(element, rootRect, parentRect) {
+        const uType = element.getAttribute('data-u-type');
+        const uName = element.getAttribute('data-u-name');
+        let nodeData = null;
+
+        if (uType && uName) {
+            const rect = unscaledRect(element);
+            const style = window.getComputedStyle(element);
+            const relativeX = rect.left - rootRect.left;
+            const relativeY = rect.top - rootRect.top;
+
+            let textContent = element.innerText || '';
+            if (element.tagName.toLowerCase() === 'input') {
+                textContent = element.value || element.placeholder || '';
+            }
+
+            const uOptions = [];
+            if (uType === 'dropdown' && element.tagName.toLowerCase() === 'select') {
+                element.querySelectorAll('option').forEach(opt => uOptions.push(opt.innerText.trim()));
+            }
+
+            const backgroundImageSrc = firstCssUrl(style.backgroundImage);
+            const imageSrc = readAttr(element, ['data-u-src', 'src']);
+            const imageFit = readAttr(element, ['data-u-fit']) || style.objectFit || style.backgroundSize || '';
+
+            nodeData = {
+                schemaVersion: 2,
+                name: uName,
+                type: uType,
+                dir: element.getAttribute('data-u-dir') || 'v',
+                value: parseFloat(element.getAttribute('data-u-value')) || 0.5,
+                isChecked: element.getAttribute('data-u-checked') === 'true',
+                options: uOptions,
+                x: Math.round(relativeX),
+                y: Math.round(relativeY),
+                width: Math.round(rect.width),
+                height: Math.round(rect.height),
+                color: rgb2hex(style.backgroundColor),
+                fontColor: rgb2hex(style.color),
+                fontSize: Math.round(parseFloat(style.fontSize) || 14),
+                textAlign: style.textAlign || 'center',
+                text: textContent.trim(),
+                imageSrc: imageSrc,
+                backgroundImageSrc: backgroundImageSrc,
+                imageFit: imageFit,
+                layoutHint: inferLayoutHint(element, rect, parentRect || rootRect, style),
+                safeArea: readAttr(element, ['data-u-safe-area']),
+                anchorPreset: readAttr(element, ['data-u-anchor']),
+                anchorMin: readAttr(element, ['data-u-anchor-min']),
+                anchorMax: readAttr(element, ['data-u-anchor-max']),
+                pivot: readAttr(element, ['data-u-pivot']),
+                offsetMin: readAttr(element, ['data-u-offset-min']),
+                offsetMax: readAttr(element, ['data-u-offset-max']),
+                cssPosition: style.position,
+                cssLeft: style.left,
+                cssRight: style.right,
+                cssTop: style.top,
+                cssBottom: style.bottom,
+                cssWidth: style.width,
+                cssHeight: style.height,
+                cssObjectFit: style.objectFit,
+                cssBackgroundSize: style.backgroundSize,
+                children: []
+            };
+        }
+
+        const childrenData = [];
+        const nextParentRect = nodeData ? unscaledRect(element) : parentRect;
+        for (let i = 0; i < element.children.length; i++) {
+            if (element.tagName.toLowerCase() === 'select' && element.children[i].tagName.toLowerCase() === 'option') {
+                continue;
+            }
+            const childResult = traverseAndBake(element.children[i], rootRect, nextParentRect);
+            if (childResult) childrenData.push(childResult);
+        }
+
+        if (nodeData) {
+            nodeData.children = childrenData;
+            return nodeData;
+        }
+
+        if (childrenData.length > 0) {
+            return childrenData.length === 1 ? childrenData[0] : {
+                schemaVersion: 2,
+                name: 'layoutGroup_' + Math.random().toString(36).substr(2, 5),
+                type: 'div',
+                dir: 'v',
+                value: 0,
+                isChecked: false,
+                options: [],
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+                color: '#FFFFFF00',
+                fontColor: '#000000',
+                fontSize: 14,
+                textAlign: 'center',
+                text: '',
+                layoutHint: 'fixed',
+                children: childrenData
+            };
+        }
+
+        return null;
+    }
+
+    function inferLayoutHint(element, rect, parentRect, style) {
+        const explicit = readAttr(element, ['data-u-layout', 'data-u-anchor']);
+        if (explicit) return explicit;
+
+        const left = rect.left - parentRect.left;
+        const top = rect.top - parentRect.top;
+        const right = parentRect.right - rect.right;
+        const bottom = parentRect.bottom - rect.bottom;
+        const tol = Math.max(2, Math.min(parentRect.width, parentRect.height) * 0.01);
+
+        if (left <= tol && top <= tol && right <= tol && bottom <= tol) return 'stretch';
+        if (top <= tol && left <= tol && right <= tol) return 'top-bar';
+        if (bottom <= tol && left <= tol && right <= tol) return 'bottom-bar';
+        if (left <= tol && top <= tol && bottom <= tol) return 'left-panel';
+        if (right <= tol && top <= tol && bottom <= tol) return 'right-panel';
+
+        const centerX = left + rect.width * 0.5;
+        const centerY = top + rect.height * 0.5;
+        if (Math.abs(centerX - parentRect.width * 0.5) <= tol * 2 &&
+            Math.abs(centerY - parentRect.height * 0.5) <= tol * 2 &&
+            rect.width < parentRect.width * 0.95 &&
+            rect.height < parentRect.height * 0.95) {
+            return 'center';
+        }
+
+        const inlineStyle = element.style;
+        const hasHorizontalEdges = !!inlineStyle.left && !!inlineStyle.right && inlineStyle.right !== 'auto';
+        const hasVerticalEdges = !!inlineStyle.top && !!inlineStyle.bottom && inlineStyle.bottom !== 'auto';
+        if (hasHorizontalEdges && hasVerticalEdges) return 'stretch';
+        if (hasHorizontalEdges) return top <= parentRect.height * 0.5 ? 'stretch-x-top' : 'stretch-x-bottom';
+        if (hasVerticalEdges) return left <= parentRect.width * 0.5 ? 'stretch-y-left' : 'stretch-y-right';
+
+        return 'fixed';
+    }
+
+    function readAttr(element, names) {
+        for (const name of names) {
+            const value = element.getAttribute(name);
+            if (value !== null && value !== '') return value;
+        }
+        return '';
+    }
+
+    function firstCssUrl(value) {
+        if (!value || value === 'none') return '';
+        const match = value.match(/url\((['"]?)(.*?)\1\)/);
+        return match ? match[2] : '';
+    }
+
+    function rgb2hex(rgb) {
+        if (!rgb || rgb === 'rgba(0, 0, 0, 0)' || rgb === 'transparent') return '#FFFFFF00';
+        const match = rgb.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)$/);
+        if (!match) return '#FFFFFF';
+        const r = ('0' + parseInt(match[1], 10).toString(16)).slice(-2);
+        const g = ('0' + parseInt(match[2], 10).toString(16)).slice(-2);
+        const b = ('0' + parseInt(match[3], 10).toString(16)).slice(-2);
+        const a = match[4] ? ('0' + Math.round(parseFloat(match[4]) * 255).toString(16)).slice(-2) : 'ff';
+        return `#${r}${g}${b}${a === 'ff' ? '' : a}`;
+    }
+</script>
+</body>
+</html>

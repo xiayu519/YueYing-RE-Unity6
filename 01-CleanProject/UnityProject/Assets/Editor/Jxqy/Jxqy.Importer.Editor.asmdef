@@ -1,0 +1,22 @@
+{
+    "name": "Jxqy.Importer.Editor",
+    "rootNamespace": "Jxqy.Editor",
+    "references": [
+        "GUID:6572381e8157783499bf6ce8f56b9292",
+        "GUID:08c494fd58fb4d85a313e13f2054cf12",
+        "GUID:4d1926c9df5b052469a1c63448b7609a",
+        "GUID:f4d342302c4b4c2ab6a634c624e3857e",
+        "GUID:24c092aee38482f4e80715eaa8148782"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

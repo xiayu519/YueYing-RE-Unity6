@@ -1,0 +1,14 @@
+/UnityProject/Library/
+/UnityProject/Temp/
+/UnityProject/Logs/
+/UnityProject/Build/
+/UnityProject/Builds/
+/UnityProject/Bundles/
+/UnityProject/UserSettings/
+/UnityProject/obj*/
+/UnityProject/bin/
+/UnityProject/Assets/AssetRaw/Jxqy/
+/UnityProject/Assets/StreamingAssets/
+*.csproj
+*.sln
+*.unitypackage

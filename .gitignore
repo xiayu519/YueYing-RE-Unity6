@@ -1,0 +1,40 @@
+# Local delivery downloads are never committed.
+/02-WindowsIL2CPP/
+/03-ResourcePackage/
+
+# Unity-generated state for the clean project.
+/01-CleanProject/UnityProject/[Ll]ibrary/
+/01-CleanProject/UnityProject/[Tt]emp/
+/01-CleanProject/UnityProject/[Oo]bj/
+/01-CleanProject/UnityProject/[Bb]in/
+/01-CleanProject/UnityProject/[Ll]ogs/
+/01-CleanProject/UnityProject/[Bb]uild/
+/01-CleanProject/UnityProject/[Bb]uilds/
+/01-CleanProject/UnityProject/[Bb]undles/
+/01-CleanProject/UnityProject/[Uu]serSettings/
+/01-CleanProject/UnityProject/Assets/StreamingAssets/
+/01-CleanProject/UnityProject/Assets/StreamingAssets.meta
+
+# Original/proprietary game resources are supplied separately.
+/01-CleanProject/UnityProject/Assets/AssetRaw/Jxqy/
+/01-CleanProject/UnityProject/Assets/AssetRaw/Jxqy.meta
+*.unitypackage
+
+# IDE-generated files.
+*.csproj
+*.sln
+*.suo
+*.user
+*.userprefs
+/.vs/
+**/.idea/
+
+# Agent/spec workspaces must never enter the public clean repository.
+**/.agents/
+**/.codex/
+**/.claude/
+**/openspec/
+
+# OS files.
+.DS_Store
+Thumbs.db

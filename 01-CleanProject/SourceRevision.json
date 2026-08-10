@@ -1,0 +1,10 @@
+{
+  "sourceRepository": "https://github.com/xiayu519/YueYing-RE.git",
+  "sourceCommit": "92b5e6230adae5bf98bb12ef74d248003efbdc18",
+  "unityVersion": "6000.5.4f1",
+  "resourcePackage": "JxqyResources-20260810.unitypackage",
+  "cleanProjectMode": "EditorSimulateMode",
+  "windowsDelivery": "IL2CPP",
+  "resourceContent": "ExternalDownload",
+  "resourceEncryption": "FileOffSet"
+}
