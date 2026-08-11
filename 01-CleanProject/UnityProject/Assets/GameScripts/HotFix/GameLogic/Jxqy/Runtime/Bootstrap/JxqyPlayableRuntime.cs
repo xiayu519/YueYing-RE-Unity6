@@ -4828,11 +4828,22 @@ namespace Jxqy.Bootstrap
                     ParseIniInteger(entry, "Number", -1));
             }
             _uiSession.Shop = _shop;
-            _uiSession.Open(JxqyUiScreen.Trade);
-            await UniTask.WaitUntil(
-                () => _uiSession.CurrentScreen != JxqyUiScreen.Trade,
-                cancellationToken:
-                    this.GetCancellationTokenOnDestroy());
+            _legacyInputDisabled = true;
+            try
+            {
+                _uiSession.Open(JxqyUiScreen.Trade);
+                await UniTask.WaitUntil(
+                    () => !_uiSession.IsOpen(JxqyUiScreen.Trade),
+                    cancellationToken:
+                        this.GetCancellationTokenOnDestroy());
+            }
+            finally
+            {
+                // Original IsBuyGoodsEnd always restores player input when
+                // the trade interface closes, including scripted shops that
+                // return immediately after BuyGoods/SellGoods.
+                _legacyInputDisabled = false;
+            }
         }
 
         private async UniTask ClearAllSavesAsync()

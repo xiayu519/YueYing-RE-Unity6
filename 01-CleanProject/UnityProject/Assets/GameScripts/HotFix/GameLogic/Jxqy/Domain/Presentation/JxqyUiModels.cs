@@ -352,6 +352,36 @@ namespace Jxqy.Domain.Presentation
                 : screen);
         }
 
+        public bool IsOpen(JxqyUiScreen screen)
+        {
+            return _stack.Contains(screen) ||
+                   LeftPanelScreen == screen ||
+                   RightPanelScreen == screen;
+        }
+
+        public void Close(JxqyUiScreen screen)
+        {
+            bool changed = _stack.RemoveAll(
+                               value => value == screen) > 0;
+            if (LeftPanelScreen == screen)
+            {
+                LeftPanelScreen = null;
+                changed = true;
+            }
+            if (RightPanelScreen == screen)
+            {
+                RightPanelScreen = null;
+                changed = true;
+            }
+            if (!changed)
+                return;
+            _selection = 0;
+            ClearNotice();
+            if (IsSoundWindow(screen))
+                RequestSound(JxqyUiSound.WindowClose);
+            Changed?.Invoke();
+        }
+
         public void OpenPlayerEquipment()
         {
             PartnerEquipmentTarget = null;

@@ -2687,7 +2687,7 @@ namespace GameLogic
 
         private void Close()
         {
-            Session?.Cancel();
+            Session?.Close(JxqyUiScreen.Trade);
         }
 
         private void RemoveGoodsPanel()
