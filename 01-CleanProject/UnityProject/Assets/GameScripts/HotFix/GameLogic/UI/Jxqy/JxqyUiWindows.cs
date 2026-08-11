@@ -1309,8 +1309,15 @@ namespace GameLogic
             IReadOnlyList<string> memos = Session?.Memos;
             if (memos == null)
                 return;
-            foreach (string memo in memos)
+            // The original MemoListManager uses AddFirst, so index zero is
+            // always the newest memo. Runtime saves keep entries in event
+            // order; enumerate them backwards to preserve that presentation
+            // without invalidating existing acceptance saves.
+            for (int memoIndex = memos.Count - 1;
+                 memoIndex >= 0;
+                 memoIndex--)
             {
+                string memo = memos[memoIndex];
                 string value = (memo ?? string.Empty).Trim();
                 if (value.Length == 0)
                     continue;

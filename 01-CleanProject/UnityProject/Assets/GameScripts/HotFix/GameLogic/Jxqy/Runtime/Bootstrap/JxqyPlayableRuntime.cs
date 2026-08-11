@@ -112,7 +112,7 @@ namespace Jxqy.Bootstrap
         private const int LegacyMagicBaseSpeed = 100;
         // Temporary route-acceptance aid approved by the user. Disable this
         // single switch when testing ends to restore original run-Thew use.
-        private const bool TestingUnlimitedRunThew = true;
+        private const bool TestingUnlimitedRunThew = false;
         private const string MagicExperienceFileName = "MagicExp.ini";
         internal const string InitialMapStableId =
             "map:map/map_002_凌绝峰峰顶.map";
@@ -2900,7 +2900,10 @@ namespace Jxqy.Bootstrap
         {
             if (string.IsNullOrWhiteSpace(text))
                 return;
-            int index = _memoEntries.FindIndex(entry =>
+            // Entries are stored chronologically and presented in reverse.
+            // The original newest-first list deletes the first matching
+            // memo, which corresponds to the last match in this storage.
+            int index = _memoEntries.FindLastIndex(entry =>
                 string.Equals(
                     entry,
                     text.Trim(),

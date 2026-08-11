@@ -895,8 +895,12 @@ namespace Jxqy.Domain.Presentation
                 case JxqyUiScreen.Memo:
                     if (Memos != null)
                     {
-                        foreach (string memo in Memos)
-                            rows.Add(memo ?? string.Empty);
+                        for (int index = Memos.Count - 1;
+                             index >= 0;
+                             index--)
+                        {
+                            rows.Add(Memos[index] ?? string.Empty);
+                        }
                     }
                     break;
                 case JxqyUiScreen.Trade:

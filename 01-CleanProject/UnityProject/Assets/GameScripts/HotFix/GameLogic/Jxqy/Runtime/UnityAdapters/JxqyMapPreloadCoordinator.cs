@@ -253,6 +253,13 @@ namespace Jxqy.UnityAdapters
                         $"Generated map scene not found: {mapStableId}");
                 }
             }
+            bool reuseActiveScene = sceneEntry != null &&
+                                    !string.IsNullOrEmpty(
+                                        _activeSceneAddress) &&
+                                    string.Equals(
+                                        _activeSceneAddress,
+                                        sceneEntry.SceneAddress,
+                                        StringComparison.OrdinalIgnoreCase);
 
             var candidateScope = new JxqyResourceScope(
                 $"map:{Guid.NewGuid():N}:{mapStableId}");
@@ -260,7 +267,9 @@ namespace Jxqy.UnityAdapters
                 group.Resources.Count);
             bool candidateSceneLoaded = false;
             int totalSteps = group.Resources.Count +
-                             (sceneEntry == null ? 0 : 1);
+                             (sceneEntry == null || reuseActiveScene
+                                 ? 0
+                                 : 1);
             try
             {
                 for (int index = 0; index < group.Resources.Count; index++)
@@ -279,7 +288,7 @@ namespace Jxqy.UnityAdapters
                         "Resource"));
                 }
 
-                if (sceneEntry != null)
+                if (sceneEntry != null && !reuseActiveScene)
                 {
                     string sceneAddress = sceneEntry.SceneAddress;
                     await _scenes.LoadAdditiveAsync(
@@ -365,7 +374,11 @@ namespace Jxqy.UnityAdapters
             try
             {
                 if (_scenes != null &&
-                    !string.IsNullOrEmpty(previousSceneAddress))
+                    !string.IsNullOrEmpty(previousSceneAddress) &&
+                    !string.Equals(
+                        previousSceneAddress,
+                        _activeSceneAddress,
+                        StringComparison.OrdinalIgnoreCase))
                 {
                     await _scenes.UnloadAsync(
                         previousSceneAddress,
