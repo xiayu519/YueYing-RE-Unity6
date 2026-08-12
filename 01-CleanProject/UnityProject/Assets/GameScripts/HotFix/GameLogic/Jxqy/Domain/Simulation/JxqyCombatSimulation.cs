@@ -10,6 +10,17 @@ namespace Jxqy.Domain.Simulation
             "player-magic-清心咒.ini";
         public const int ClearHeartEffectiveHealingExperience = 4;
 
+        public static int ApplyMagicExperienceMultiplier(
+            int baseExperience,
+            bool easyMode)
+        {
+            if (baseExperience <= 0)
+                return baseExperience;
+            return easyMode
+                ? checked(baseExperience * 2)
+                : baseExperience;
+        }
+
         public static bool IsPlayerPartyMember(
             JxqyCharacter character,
             JxqyPlayer player)
@@ -27,7 +38,51 @@ namespace Jxqy.Domain.Simulation
             JxqyCharacter killer,
             JxqyPlayer player)
         {
-            return IsPlayerPartyMember(killer, player);
+            if (IsPlayerPartyMember(killer, player))
+                return true;
+            if (killer == null || player == null)
+                return false;
+            return ReferenceEquals(killer.MagicController, player) ||
+                   IsPlayerPartyMember(killer.MagicSummoner, player);
+        }
+
+        public static bool IsPlayerMagicExperienceSource(
+            JxqyCharacter source,
+            JxqyPlayer player)
+        {
+            if (source == null || player == null)
+                return false;
+            return ReferenceEquals(source, player) ||
+                   ReferenceEquals(source.MagicController, player) ||
+                   ReferenceEquals(source.MagicSummoner, player);
+        }
+
+        public static JxqyNpc GetPartnerExperienceBeneficiary(
+            JxqyCharacter killer,
+            JxqyPlayer player)
+        {
+            if (killer == null || player == null)
+                return null;
+            if (IsPlayerPartyMember(killer, player) &&
+                !ReferenceEquals(killer, player))
+            {
+                return killer as JxqyNpc;
+            }
+            JxqyCharacter summoner = killer.MagicSummoner;
+            return IsPlayerPartyMember(summoner, player) &&
+                   !ReferenceEquals(summoner, player)
+                ? summoner as JxqyNpc
+                : null;
+        }
+
+        public static bool CanOwnPoisonExperience(
+            JxqyCharacter source)
+        {
+            if (source is JxqyPlayer)
+                return true;
+            return source is JxqyNpc npc &&
+                   npc.Kind == JxqyCharacterKind.Follower &&
+                   npc.Relation == JxqyRelationType.Friend;
         }
 
         public static int GetClearHeartHealingExperience(
@@ -594,6 +649,12 @@ namespace Jxqy.Domain.Simulation
         public float ReviveDelaySeconds { get; set; }
         public bool IsDead { get; private set; }
         public JxqyCharacter LastAttacker { get; private set; }
+        public JxqyCharacter MagicSummoner { get; private set; }
+        public JxqyPlayer MagicController { get; private set; }
+        public string PoisonExperienceOwnerName { get; private set; } =
+            string.Empty;
+        public string PoisonDeathExperienceOwnerName { get; private set; } =
+            string.Empty;
         public float ReviveSecondsRemaining => _reviveSecondsRemaining;
         public IReadOnlyCollection<JxqyCharacterState> DisabledActionStates =>
             _disabledActionStates;
@@ -601,6 +662,25 @@ namespace Jxqy.Domain.Simulation
         public bool IsActionEnabled(JxqyCharacterState state)
         {
             return !_disabledActionStates.Contains(state);
+        }
+
+        public void SetMagicSummoner(JxqyCharacter summoner)
+        {
+            MagicSummoner = ReferenceEquals(summoner, this)
+                ? null
+                : summoner;
+        }
+
+        public void SetMagicController(JxqyPlayer controller)
+        {
+            MagicController = ReferenceEquals(controller, this)
+                ? null
+                : controller;
+        }
+
+        public void SetPoisonExperienceOwner(string ownerName)
+        {
+            PoisonExperienceOwnerName = ownerName ?? string.Empty;
         }
 
         public void SetActionEnabled(
@@ -720,7 +800,10 @@ namespace Jxqy.Domain.Simulation
             bool removed = _statuses.Remove(kind);
             SetStatusVisualEffect(kind, false);
             if (kind == JxqyStatusKind.Poisoned)
+            {
                 _poisonAccumulator = 0;
+                PoisonExperienceOwnerName = string.Empty;
+            }
             SynchronizeStatusGates();
             return removed;
         }
@@ -753,7 +836,10 @@ namespace Jxqy.Domain.Simulation
             if (applied > 0)
                 Healed?.Invoke(this, applied);
             if (Life <= 0)
+            {
+                PoisonDeathExperienceOwnerName = string.Empty;
                 Die(LastAttacker);
+            }
         }
 
         public bool TakeDamage(
@@ -768,7 +854,10 @@ namespace Jxqy.Domain.Simulation
             Life -= applied;
             Damaged?.Invoke(this, applied, attacker);
             if (Life <= 0)
+            {
+                PoisonDeathExperienceOwnerName = string.Empty;
                 Die(attacker);
+            }
             else if (enterHurtState && !IsPetrified &&
                      IsActionEnabled(JxqyCharacterState.Hurt))
                 SetState(JxqyCharacterState.Hurt);
@@ -795,6 +884,7 @@ namespace Jxqy.Domain.Simulation
                 return false;
             IsDead = false;
             Life = LifeMax;
+            PoisonDeathExperienceOwnerName = string.Empty;
             _reviveSecondsRemaining = 0;
             SetState(JxqyCharacterState.Stand);
             Revived?.Invoke(this);
@@ -808,6 +898,7 @@ namespace Jxqy.Domain.Simulation
             // death-only state without raising a gameplay revive event.
             IsDead = false;
             LastAttacker = null;
+            PoisonDeathExperienceOwnerName = string.Empty;
             _reviveSecondsRemaining = 0;
         }
 
@@ -852,7 +943,14 @@ namespace Jxqy.Domain.Simulation
                 while (_poisonAccumulator >= 0.25f && !IsDead)
                 {
                     _poisonAccumulator -= 0.25f;
-                    TakeDamage(10, LastAttacker);
+                    string poisonOwner = PoisonExperienceOwnerName;
+                    bool lethal = Life <= 10;
+                    TakeDamage(10);
+                    if (lethal && IsDead)
+                    {
+                        PoisonDeathExperienceOwnerName =
+                            poisonOwner ?? string.Empty;
+                    }
                 }
             }
             TickStatuses(elapsedSeconds);
@@ -884,7 +982,7 @@ namespace Jxqy.Domain.Simulation
             {
                 float remaining = _statuses[key] - elapsedSeconds;
                 if (remaining <= 0)
-                    _statuses.Remove(key);
+                    ClearStatus(key);
                 else
                     _statuses[key] = remaining;
             }
@@ -2530,16 +2628,19 @@ namespace Jxqy.Domain.Simulation
                 !JxqyRelations.AreOpposed(projectile.Source, target))
                 return;
             ApplyLegacyContactStatus(
+                projectile.Source,
                 target,
                 JxqyStatusKind.Frozen,
                 magic.FrozenSeconds,
                 magic.NoSpecialKindEffect == 0);
             ApplyLegacyContactStatus(
+                projectile.Source,
                 target,
                 JxqyStatusKind.Petrified,
                 magic.PetrifiedSeconds,
                 magic.NoSpecialKindEffect == 0);
             ApplyLegacyContactStatus(
+                projectile.Source,
                 target,
                 JxqyStatusKind.Poisoned,
                 magic.PoisonSeconds,
@@ -2597,6 +2698,7 @@ namespace Jxqy.Domain.Simulation
             {
                 case JxqyMagicAdditionalEffect.Frozen:
                     ApplyLegacyContactStatus(
+                        source,
                         target,
                         JxqyStatusKind.Frozen,
                         seconds,
@@ -2604,6 +2706,7 @@ namespace Jxqy.Domain.Simulation
                     break;
                 case JxqyMagicAdditionalEffect.Poisoned:
                     ApplyLegacyContactStatus(
+                        source,
                         target,
                         JxqyStatusKind.Poisoned,
                         seconds,
@@ -2611,6 +2714,7 @@ namespace Jxqy.Domain.Simulation
                     break;
                 case JxqyMagicAdditionalEffect.Petrified:
                     ApplyLegacyContactStatus(
+                        source,
                         target,
                         JxqyStatusKind.Petrified,
                         seconds,
@@ -2620,6 +2724,7 @@ namespace Jxqy.Domain.Simulation
         }
 
         private static void ApplyLegacyContactStatus(
+            JxqyCharacter source,
             JxqyCharacter target,
             JxqyStatusKind kind,
             float seconds,
@@ -2639,6 +2744,11 @@ namespace Jxqy.Domain.Simulation
                     break;
             }
             target.ApplyStatus(kind, seconds, hasVisualEffect);
+            if (kind == JxqyStatusKind.Poisoned &&
+                JxqyExperienceRules.CanOwnPoisonExperience(source))
+            {
+                target.SetPoisonExperienceOwner(source.Name);
+            }
         }
 
         private void ResolveFollowCharacterMagic(

@@ -110,9 +110,6 @@ namespace Jxqy.Bootstrap
         private int LogicalWidth => _logicalWidth;
         private int LogicalHeight => _logicalHeight;
         private const int LegacyMagicBaseSpeed = 100;
-        // Temporary route-acceptance aid approved by the user. Disable this
-        // single switch when testing ends to restore original run-Thew use.
-        private const bool TestingUnlimitedRunThew = false;
         private const string MagicExperienceFileName = "MagicExp.ini";
         internal const string InitialMapStableId =
             "map:map/map_002_凌绝峰峰顶.map";
@@ -1331,7 +1328,6 @@ namespace Jxqy.Bootstrap
                 Level = 4,
                 Money = 400,
                 TilePosition = new JxqyIntPoint(24, 39),
-                IsRunThewUnlimitedForTesting = TestingUnlimitedRunThew,
             };
             _player.Life = _player.LifeMax;
             _player.Thew = _player.ThewMax;
@@ -5357,6 +5353,8 @@ namespace Jxqy.Bootstrap
             target.ApplyStatus(
                 JxqyStatusKind.Poisoned,
                 source.GetStatusSeconds(JxqyStatusKind.Poisoned));
+            target.SetPoisonExperienceOwner(
+                source.PoisonExperienceOwnerName);
             target.ApplyStatus(
                 JxqyStatusKind.Petrified,
                 source.GetStatusSeconds(JxqyStatusKind.Petrified));
@@ -5933,6 +5931,7 @@ namespace Jxqy.Bootstrap
                 npc.Relation = request.Relation;
                 npc.LifeMilliseconds = request.LifeMilliseconds;
                 npc.IsMagicSummon = true;
+                npc.SetMagicSummoner(request.Summoner);
                 _npcs.Add(npc);
                 await CreateNpcVisualAsync(npc, cancellationToken);
             }
@@ -6028,15 +6027,27 @@ namespace Jxqy.Bootstrap
             }
             if (target != null && !result.Hit)
                 _combatFloatTextPool?.ShowMiss(target);
-            if (projectile?.Source != _player ||
-                projectile.Magic == null ||
+            if (projectile?.Magic == null ||
                 target == null)
             {
                 return;
             }
 
+            string magicId = null;
+            if (ReferenceEquals(projectile.Source, _player))
+            {
+                magicId = projectile.Magic.Id;
+            }
+            else if (JxqyExperienceRules.IsPlayerMagicExperienceSource(
+                         projectile.Source,
+                         _player))
+            {
+                magicId = _uiSession?.SelectedSkill?.Magic?.Id;
+            }
+            if (string.IsNullOrWhiteSpace(magicId))
+                return;
             AddMagicExperience(
-                projectile.Magic.Id,
+                magicId,
                 GetMagicHitExperience(target.Level));
         }
 
@@ -6108,10 +6119,17 @@ namespace Jxqy.Bootstrap
 
         private void AddMagicExperience(string magicId, int amount)
         {
+            int adjustedAmount =
+                JxqyExperienceRules.ApplyMagicExperienceMultiplier(
+                    amount,
+                    string.Equals(
+                        _levelFileName,
+                        "Level-easy.ini",
+                        StringComparison.OrdinalIgnoreCase));
             if (_skills == null ||
                 !_skills.AddExperience(
                     magicId,
-                    amount,
+                    adjustedAmount,
                     out bool leveledUp))
             {
                 return;
@@ -7252,7 +7270,41 @@ namespace Jxqy.Bootstrap
             if (ReferenceEquals(_playerAutoAttack.Target, npc))
                 _playerAutoAttack.Target = null;
             JxqyCharacter killer = npc.LastAttacker;
-            if (JxqyExperienceRules.IsPlayerExperienceKiller(
+            string poisonOwnerName =
+                npc.PoisonDeathExperienceOwnerName;
+            if (!string.IsNullOrWhiteSpace(poisonOwnerName))
+            {
+                if (string.Equals(
+                        poisonOwnerName,
+                        _player.Name,
+                        StringComparison.Ordinal))
+                {
+                    int characterExperience =
+                        JxqyExperienceRules.CalculateDeathExperience(
+                            _player,
+                            npc);
+                    AddKillMagicExperience(characterExperience);
+                    AddPlayerExperience(characterExperience);
+                }
+                else
+                {
+                    JxqyNpc poisonOwner = _npcs.Npcs.FirstOrDefault(item =>
+                        string.Equals(
+                            item.Name,
+                            poisonOwnerName,
+                            StringComparison.Ordinal));
+                    if (poisonOwner != null &&
+                        poisonOwner.CanLevelUp > 0)
+                    {
+                        AddNpcExperience(
+                            poisonOwner,
+                            JxqyExperienceRules.CalculateDeathExperience(
+                                poisonOwner,
+                                npc));
+                    }
+                }
+            }
+            else if (JxqyExperienceRules.IsPlayerExperienceKiller(
                     killer,
                     _player))
             {
@@ -7262,7 +7314,11 @@ namespace Jxqy.Bootstrap
                         npc);
                 AddKillMagicExperience(characterExperience);
                 AddPlayerExperience(characterExperience);
-                if (killer is JxqyNpc partner &&
+                JxqyNpc partner =
+                    JxqyExperienceRules.GetPartnerExperienceBeneficiary(
+                        killer,
+                        _player);
+                if (partner != null &&
                     partner.CanLevelUp > 0)
                 {
                     AddNpcExperience(
@@ -7976,16 +8032,9 @@ namespace Jxqy.Bootstrap
             {
                 _uiSession.SetNotice("正在读取...");
                 JxqySaveGameData save =
-                    await _saveRepository.LoadOrDeleteInvalidAsync(
+                    await _saveRepository.LoadWithBackupFallbackAsync(
                         slot,
                         cancellationToken);
-                if (save == null)
-                {
-                    await RefreshSaveSlotsAsync(cancellationToken);
-                    _uiSession.SetNotice(
-                        "\u5b58\u6863\u7248\u672c\u4e0d\u517c\u5bb9\uff0c\u5df2\u81ea\u52a8\u5220\u9664");
-                    return;
-                }
                 if (!string.Equals(
                         save.World.Map,
                         ActiveMapStableId,
@@ -8034,15 +8083,13 @@ namespace Jxqy.Bootstrap
                       exception is NotSupportedException)
             {
                 Debug.LogWarning(
-                    $"JXQY incompatible save slot {slot} was removed: " +
+                    $"JXQY save slot {slot} could not be loaded and was " +
+                    $"preserved: " +
                     exception.Message,
                     this);
-                await _saveRepository.DeleteSlotAsync(
-                    slot,
-                    cancellationToken);
                 await RefreshSaveSlotsAsync(cancellationToken);
                 _uiSession.SetNotice(
-                    "\u5b58\u6863\u7248\u672c\u4e0d\u517c\u5bb9\uff0c\u5df2\u81ea\u52a8\u5220\u9664");
+                    "存档无法读取，原文件已保留");
             }
             catch (Exception exception)
             {
@@ -8239,6 +8286,8 @@ namespace Jxqy.Bootstrap
                     JxqyStatusKind.Petrified),
                 PoisonSeconds = npc.GetStatusSeconds(
                     JxqyStatusKind.Poisoned),
+                PoisonExperienceOwnerName =
+                    npc.PoisonExperienceOwnerName,
                 IsFrozenVisualEffect = npc.IsFrozenVisualEffect,
                 IsPoisonVisualEffect = npc.IsPoisonVisualEffect,
                 IsPetrifiedVisualEffect =
@@ -8754,6 +8803,8 @@ namespace Jxqy.Bootstrap
             npc.ApplyStatus(
                 JxqyStatusKind.Poisoned,
                 entry.PoisonSeconds);
+            npc.SetPoisonExperienceOwner(
+                entry.PoisonExperienceOwnerName);
             npc.RestoreStatusVisualEffects(
                 entry.IsFrozenVisualEffect,
                 entry.IsPoisonVisualEffect,
@@ -8863,14 +8914,9 @@ namespace Jxqy.Bootstrap
                 try
                 {
                     JxqySaveGameData save =
-                        await _saveRepository.LoadOrDeleteInvalidAsync(
+                        await _saveRepository.LoadWithBackupFallbackAsync(
                             view.Slot,
                             cancellationToken);
-                    if (save == null)
-                    {
-                        view.Exists = false;
-                        continue;
-                    }
                     view.Description =
                         $"{GetMapDisplayName(save.World.Map)}  " +
                         $"位置 {save.Player.TileColumn}," +
@@ -8897,7 +8943,7 @@ namespace Jxqy.Bootstrap
                 }
                 catch (Exception exception)
                 {
-                    view.Description = "损坏的存档";
+                    view.Description = "存档不可读取（原文件已保留）";
                     Debug.LogException(exception, this);
                 }
             }
@@ -9340,7 +9386,9 @@ namespace Jxqy.Bootstrap
                 (!Mathf.Approximately(input.MoveX, 0f) ||
                  !Mathf.Approximately(input.MoveY, 0f));
             bool runRequested =
-                _player.WantsToRun(IsRunRequested(input));
+                _player.WantsToRun(
+                    IsRunRequested(input),
+                    useThewWhenNormalRun: true);
             bool manualRunning = manualMovement && runRequested;
             bool moving = scriptedMovement || manualMovement;
             if (manualMovement)
@@ -9363,7 +9411,8 @@ namespace Jxqy.Bootstrap
             _player.TickThew(
                 elapsed,
                 moving,
-                _player.IsRunning || manualRunning);
+                _player.IsRunning || manualRunning,
+                useThewWhenNormalRun: true);
             if (_player.Thew <= 0 && _player.IsRunning)
             {
                 _player.SetState(
@@ -9639,7 +9688,8 @@ namespace Jxqy.Bootstrap
                         HandlePointerPrimary(
                             intent.Value,
                             _player.WantsToRun(
-                                IsRunRequested(frame)),
+                                IsRunRequested(frame),
+                                useThewWhenNormalRun: true),
                             false,
                             false);
                         break;
@@ -9826,7 +9876,9 @@ namespace Jxqy.Bootstrap
             _playerAutoAttack.Target = null;
             _player.BeginPath(
                 path,
-                _player.WantsToRun(IsRunRequested(frame)) &&
+                _player.WantsToRun(
+                    IsRunRequested(frame),
+                    useThewWhenNormalRun: true) &&
                 !_player.IsRunDisabled);
         }
 

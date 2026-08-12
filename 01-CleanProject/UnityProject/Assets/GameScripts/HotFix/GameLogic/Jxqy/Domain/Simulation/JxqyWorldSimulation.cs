@@ -972,6 +972,7 @@ namespace Jxqy.Domain.Simulation
         public int Direction { get; set; }
         public JxqyRelationType Relation { get; set; }
         public float LifeMilliseconds { get; set; }
+        public JxqyCharacter Summoner { get; set; }
     }
 
     public sealed class JxqyBodyRevivalResult
@@ -1042,6 +1043,7 @@ namespace Jxqy.Domain.Simulation
                         LifeMilliseconds = Math.Max(
                             0,
                             magic.ReviveBodyLifeMilliseconds),
+                        Summoner = source,
                     });
                 }
                 if (maximum > 0 && result.RevivedNpcs.Count >= maximum)

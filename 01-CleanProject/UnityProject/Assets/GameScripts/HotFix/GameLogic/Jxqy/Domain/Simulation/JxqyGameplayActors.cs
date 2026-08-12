@@ -674,7 +674,6 @@ namespace Jxqy.Domain.Simulation
 
         public bool WalkIsRun { get; set; }
         public bool IsNotUseThewWhenRun { get; set; }
-        public bool IsRunThewUnlimitedForTesting { get; set; }
         public bool IsManaRestore { get; set; }
         public bool ManaLimit { get; set; }
         public int AddLifeRestorePercent { get; set; }
@@ -688,8 +687,7 @@ namespace Jxqy.Domain.Simulation
             bool consumesThew = IsInFighting || useThewWhenNormalRun;
             return (WalkIsRun || runModifierHeld) &&
                    !IsRunDisabled &&
-                   (IsRunThewUnlimitedForTesting ||
-                    IsNotUseThewWhenRun ||
+                   (IsNotUseThewWhenRun ||
                     !consumesThew ||
                     Thew > 0);
         }
@@ -712,7 +710,6 @@ namespace Jxqy.Domain.Simulation
             bool consumesRunThew =
                 moving &&
                 running &&
-                !IsRunThewUnlimitedForTesting &&
                 !IsNotUseThewWhenRun &&
                 (IsInFighting || useThewWhenNormalRun);
             if (consumesRunThew)

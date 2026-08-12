@@ -6,7 +6,7 @@ namespace Jxqy.Domain.Persistence
     [Serializable]
     public sealed class JxqySaveGameData
     {
-        public const int CurrentSchemaVersion = 9;
+        public const int CurrentSchemaVersion = 10;
         public const int OldestSupportedSchemaVersion = 2;
 
         public int SchemaVersion = CurrentSchemaVersion;
@@ -123,6 +123,7 @@ namespace Jxqy.Domain.Persistence
         public float FrozenSeconds;
         public float PetrifiedSeconds;
         public float PoisonSeconds;
+        public string PoisonExperienceOwnerName = string.Empty;
         public bool IsFrozenVisualEffect;
         public bool IsPoisonVisualEffect;
         public bool IsPetrifiedVisualEffect;

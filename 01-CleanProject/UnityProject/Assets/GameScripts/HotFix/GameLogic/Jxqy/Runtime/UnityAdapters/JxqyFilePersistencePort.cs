@@ -73,8 +73,6 @@ namespace Jxqy.UnityAdapters
                         if (File.Exists(path))
                         {
                             File.Replace(temporary, path, backup);
-                            if (File.Exists(backup))
-                                File.Delete(backup);
                         }
                         else
                         {

@@ -51,8 +51,19 @@ namespace Jxqy.UnityAdapters
             CancellationToken cancellationToken = default)
         {
             ValidateSlot(slot);
-            byte[] bytes = await _persistence.ReadAsync(
+            return await LoadPathAsync(
                 GetSlotPath(slot),
+                slot,
+                cancellationToken);
+        }
+
+        private async UniTask<JxqySaveGameData> LoadPathAsync(
+            string relativePath,
+            int slot,
+            CancellationToken cancellationToken)
+        {
+            byte[] bytes = await _persistence.ReadAsync(
+                relativePath,
                 cancellationToken);
             JxqySaveGameData save;
             try
@@ -96,21 +107,35 @@ namespace Jxqy.UnityAdapters
             return save;
         }
 
-        public async UniTask<JxqySaveGameData> LoadOrDeleteInvalidAsync(
+        public async UniTask<JxqySaveGameData> LoadWithBackupFallbackAsync(
             int slot,
             CancellationToken cancellationToken = default)
         {
-            try
+            ValidateSlot(slot);
+            string primaryPath = GetSlotPath(slot);
+            string backupPath = GetSlotBackupPath(slot);
+            if (_persistence.Exists(primaryPath))
             {
-                return await LoadAsync(slot, cancellationToken);
+                try
+                {
+                    return await LoadPathAsync(
+                        primaryPath,
+                        slot,
+                        cancellationToken);
+                }
+                catch (InvalidDataException)
+                    when (_persistence.Exists(backupPath))
+                {
+                    return await LoadPathAsync(
+                        backupPath,
+                        slot,
+                        cancellationToken);
+                }
             }
-            catch (Exception exception)
-                when (exception is InvalidDataException ||
-                      exception is NotSupportedException)
-            {
-                await DeleteSlotAsync(slot, cancellationToken);
-                return null;
-            }
+            return await LoadPathAsync(
+                backupPath,
+                slot,
+                cancellationToken);
         }
 
         public async UniTask<JxqySaveGameData> ImportLegacyGameIniAsync(
@@ -129,7 +154,14 @@ namespace Jxqy.UnityAdapters
         public bool Exists(int slot)
         {
             ValidateSlot(slot);
-            return _persistence.Exists(GetSlotPath(slot));
+            return _persistence.Exists(GetSlotPath(slot)) ||
+                   _persistence.Exists(GetSlotBackupPath(slot));
+        }
+
+        public bool BackupExists(int slot)
+        {
+            ValidateSlot(slot);
+            return _persistence.Exists(GetSlotBackupPath(slot));
         }
 
         public bool SnapshotExists(int slot)
@@ -147,7 +179,13 @@ namespace Jxqy.UnityAdapters
                     GetSlotPath(slot),
                     cancellationToken);
                 await _persistence.DeleteAsync(
+                    GetSlotBackupPath(slot),
+                    cancellationToken);
+                await _persistence.DeleteAsync(
                     GetSnapshotPath(slot),
+                    cancellationToken);
+                await _persistence.DeleteAsync(
+                    GetSnapshotBackupPath(slot),
                     cancellationToken);
             }
         }
@@ -161,7 +199,13 @@ namespace Jxqy.UnityAdapters
                 GetSlotPath(slot),
                 cancellationToken);
             await _persistence.DeleteAsync(
+                GetSlotBackupPath(slot),
+                cancellationToken);
+            await _persistence.DeleteAsync(
                 GetSnapshotPath(slot),
+                cancellationToken);
+            await _persistence.DeleteAsync(
+                GetSnapshotBackupPath(slot),
                 cancellationToken);
         }
 
@@ -294,9 +338,19 @@ namespace Jxqy.UnityAdapters
             return $"Saves/Slot{slot}/save-v1.json";
         }
 
+        private static string GetSlotBackupPath(int slot)
+        {
+            return GetSlotPath(slot) + ".bak";
+        }
+
         private static string GetSnapshotPath(int slot)
         {
             return $"Saves/Slot{slot}/snapshot.png";
+        }
+
+        private static string GetSnapshotBackupPath(int slot)
+        {
+            return GetSnapshotPath(slot) + ".bak";
         }
 
         private static void ValidateSlot(int slot)
