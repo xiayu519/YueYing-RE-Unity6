@@ -3056,10 +3056,25 @@ namespace Jxqy.Bootstrap
                 }
                 return;
             }
-            string text = await LoadDynamicTextAsync(
-                "ini/save",
-                safeFileName,
-                this.GetCancellationTokenOnDestroy());
+            string text;
+            try
+            {
+                text = await LoadDynamicTextAsync(
+                    "ini/save",
+                    safeFileName,
+                    this.GetCancellationTokenOnDestroy());
+            }
+            catch (FileNotFoundException exception)
+            {
+                // Original NpcManager.Load logs a missing snapshot and returns
+                // after clearing ordinary NPCs, while the script keeps running.
+                Debug.LogWarning(
+                    $"JXQY-NPC snapshot '{safeFileName}' is unavailable. " +
+                    "Original behavior leaves ordinary NPCs empty and " +
+                    $"continues the script. {exception.Message}",
+                    this);
+                return;
+            }
             Dictionary<string, Dictionary<string, string>> sections =
                 JxqyLegacySaveImporter.ParseIni(text);
             foreach (KeyValuePair<string, Dictionary<string, string>>
@@ -12304,8 +12319,8 @@ namespace Jxqy.Bootstrap
         private static Texture2D CreateRainTexture()
         {
             var texture = new Texture2D(
-                2,
-                16,
+                JxqyPresentationDrawCommandBuilder.RainTextureWidth,
+                JxqyPresentationDrawCommandBuilder.RainTextureHeight,
                 TextureFormat.RGBA32,
                 false)
             {
@@ -12313,16 +12328,9 @@ namespace Jxqy.Bootstrap
                 filterMode = FilterMode.Point,
                 wrapMode = TextureWrapMode.Clamp,
             };
-            var pixels = new Color32[32];
-            for (int y = 0; y < 16; y++)
-            {
-                byte alpha = (byte)(80 + y * 10);
-                pixels[y * 2] =
-                    new Color32(190, 210, 255, alpha);
-                pixels[y * 2 + 1] =
-                    new Color32(150, 180, 235, alpha);
-            }
-            texture.SetPixels32(pixels);
+            texture.SetPixels32(
+                JxqyPresentationDrawCommandBuilder
+                    .CreateRainTexturePixels());
             texture.Apply(false, true);
             return texture;
         }

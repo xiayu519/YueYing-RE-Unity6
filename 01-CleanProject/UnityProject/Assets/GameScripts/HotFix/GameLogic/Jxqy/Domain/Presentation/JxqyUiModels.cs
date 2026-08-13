@@ -419,6 +419,13 @@ namespace Jxqy.Domain.Presentation
         {
             if (CurrentScreen == JxqyUiScreen.Title)
                 return;
+            if (IsDialogueScreen(CurrentScreen))
+                return;
+            CloseCurrentScreen();
+        }
+
+        private void CloseCurrentScreen()
+        {
             bool closeWindow = IsSoundWindow(CurrentScreen);
             if (_stack.Count > 0)
                 _stack.RemoveAt(_stack.Count - 1);
@@ -1034,7 +1041,7 @@ namespace Jxqy.Domain.Presentation
             {
                 DialogueCompleted?.Invoke(choice);
                 Dialogue = null;
-                Cancel();
+                CloseCurrentScreen();
             }
             return true;
         }

@@ -11,6 +11,8 @@ namespace Jxqy.UnityAdapters
     {
         public const int WeatherDepth = 5_000_000;
         public const int FadeDepth = 6_000_000;
+        public const int RainTextureWidth = 1;
+        public const int RainTextureHeight = 20;
 
         public string RainTextureAddress { get; set; } =
             "jxqy/shared/weather/rain";
@@ -68,8 +70,8 @@ namespace Jxqy.UnityAdapters
                 if (particle.Kind == JxqyWeatherParticleKind.Rain)
                 {
                     texture = RainTextureAddress;
-                    width = 2;
-                    height = 16;
+                    width = RainTextureWidth;
+                    height = RainTextureHeight;
                 }
                 else
                 {
@@ -104,6 +106,16 @@ namespace Jxqy.UnityAdapters
                 color.Green,
                 color.Blue,
                 color.Alpha);
+        }
+
+        public static Color32[] CreateRainTexturePixels()
+        {
+            var pixels = new Color32[RainTextureHeight];
+            var low = new Color32(128, 128, 128, 51);
+            var bright = new Color32(128, 128, 128, 76);
+            for (int y = 0; y < pixels.Length; y++)
+                pixels[y] = y < 6 || y >= 15 ? low : bright;
+            return pixels;
         }
     }
 }

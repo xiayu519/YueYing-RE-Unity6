@@ -10,7 +10,7 @@
 
 ![《剑侠情缘外传：月影传说》Unity 6 运行截图](docs/images/runtime.png)
 
-![《剑侠情缘外传：月影传说》凌绝峰运行截图](docs/images/runtime-lingjuefeng.png)
+![《剑侠情缘外传：月影传说》雨天对话运行截图](docs/images/runtime-rain-dialogue.png)
 
 ## 下载
 
