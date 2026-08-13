@@ -1,4 +1,4 @@
-# Local delivery downloads are never committed.
+# Local delivery artifacts stay outside the public repository.
 /02-WindowsIL2CPP/
 /03-ResourcePackage/
 
