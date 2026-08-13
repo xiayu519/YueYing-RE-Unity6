@@ -16,7 +16,7 @@
 
 - [Unity 月影传说 PC 体验包](https://github.com/xiayu519/YueYing-RE-Unity6/releases/download/windows-il2cpp-20260810/JxqyHD-Windows-x64-IL2CPP-20260810.zip)：下载后解压，运行 `JxqyHD.exe`。
 - [开发者资源包（百度网盘下载信息）](https://github.com/xiayu519/YueYing-RE-Unity6/releases/download/windows-il2cpp-20260810/JxqyResources-20260810-BaiduNetdisk.txt)：TXT 内含 `JxqyResources-20260810.unitypackage` 的百度网盘链接和提取码。
-- [欢仙之刃资源补丁](https://github.com/xiayu519/YueYing-RE-Unity6/releases/download/windows-il2cpp-20260810/JxqyResources-Patch-20260812-HuanXianZhiRen.unitypackage)：导入基础资源包后再导入此补丁，并确认覆盖同名文件；已经导入基础资源包的工程只需导入补丁。
+- [累计资源补丁（欢仙之刃与武当挑战数值）](https://github.com/xiayu519/YueYing-RE-Unity6/releases/download/windows-il2cpp-20260810/JxqyResources-Patch-20260812-HuanXianZhiRen.unitypackage)：导入基础资源包后再导入此补丁，并确认覆盖同名文件；已经导入基础资源包或旧版补丁的工程只需重新导入此补丁。
 
 ## 开发环境
 

@@ -6,7 +6,7 @@ Unity 版本固定为 `6000.5.4f1`。
 
 1. 使用 Unity Hub 打开 `UnityProject`。
 2. 将 `JxqyResources-20260810.unitypackage` 完整导入工程。
-3. 再导入 [`JxqyResources-Patch-20260812-HuanXianZhiRen.unitypackage`](https://github.com/xiayu519/YueYing-RE-Unity6/releases/download/windows-il2cpp-20260810/JxqyResources-Patch-20260812-HuanXianZhiRen.unitypackage)，并确认覆盖同名文件。已经导入基础资源包的工程只需导入此补丁。
+3. 再导入累计资源补丁 [`JxqyResources-Patch-20260812-HuanXianZhiRen.unitypackage`](https://github.com/xiayu519/YueYing-RE-Unity6/releases/download/windows-il2cpp-20260810/JxqyResources-Patch-20260812-HuanXianZhiRen.unitypackage)，并确认覆盖同名文件。该补丁包含欢仙之刃资源和武当挑战数值更新；已经导入基础资源包或旧版补丁的工程只需重新导入此补丁。
 4. 等待 Unity 完成导入和编译。
 5. 双击根目录的 `SetupResources.bat`。
 6. 看到 `SUCCESS` 后，打开 `Assets/Scenes/main.unity` 并点击 Play。
