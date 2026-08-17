@@ -12,6 +12,8 @@
 
 ![《剑侠情缘外传：月影传说》雨天对话运行截图](docs/images/runtime-rain-dialogue.png)
 
+![《剑侠情缘外传：月影传说》雪景对话运行截图](docs/images/runtime-snow-dialogue.png)
+
 ## 下载
 
 - [Unity 月影传说 PC 体验包](https://github.com/xiayu519/YueYing-RE-Unity6/releases/download/windows-il2cpp-20260810/JxqyHD-Windows-x64-IL2CPP-20260810.zip)：下载后解压，运行 `JxqyHD.exe`。
