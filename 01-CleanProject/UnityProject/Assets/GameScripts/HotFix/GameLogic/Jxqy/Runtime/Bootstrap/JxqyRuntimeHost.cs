@@ -380,7 +380,8 @@ namespace Jxqy.Bootstrap
             _mapResources = new JxqyYooAssetResourcePort();
             _maps = new JxqyMapPreloadCoordinator(
                 _mapResources,
-                new JxqyTengineMapScenePort());
+                new JxqyTengineMapScenePort(),
+                keepLoadedSceneAsRuntimeShell: true);
             await _maps.LoadManifestAsync(_playableCancellation.Token);
             await _maps.SwitchMapAsync(
                 JxqyPlayableRuntime.InitialMapStableId,

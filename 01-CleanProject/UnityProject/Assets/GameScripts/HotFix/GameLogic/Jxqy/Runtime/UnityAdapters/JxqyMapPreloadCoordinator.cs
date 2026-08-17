@@ -125,9 +125,15 @@ namespace Jxqy.UnityAdapters
     {
         public const string PreloadManifestAddress =
             "jxqy/manifests/preload-manifest.json";
+        public const int ResourceLoadBatchSize = 32;
 
         private readonly IJxqyResourcePort _resources;
         private readonly IJxqyMapScenePort _scenes;
+        // The localized runtime renders legacy map data itself. Generated
+        // Unity scenes only provide a common camera/rendering shell, so the
+        // playable host can retain one shell just as the original game keeps
+        // its game screen alive while replacing map data.
+        private readonly bool _keepLoadedSceneAsRuntimeShell;
         private readonly List<IDisposable> _manifestLeases = new();
         private readonly Dictionary<string, JxqyResourceScope> _sharedScopes =
             new(StringComparer.OrdinalIgnoreCase);
@@ -140,11 +146,14 @@ namespace Jxqy.UnityAdapters
 
         public JxqyMapPreloadCoordinator(
             IJxqyResourcePort resources,
-            IJxqyMapScenePort scenes = null)
+            IJxqyMapScenePort scenes = null,
+            bool keepLoadedSceneAsRuntimeShell = false)
         {
             _resources = resources ??
                          throw new ArgumentNullException(nameof(resources));
             _scenes = scenes;
+            _keepLoadedSceneAsRuntimeShell =
+                keepLoadedSceneAsRuntimeShell;
         }
 
         public string ActiveMapStableId => _activeMapStableId;
@@ -256,10 +265,11 @@ namespace Jxqy.UnityAdapters
             bool reuseActiveScene = sceneEntry != null &&
                                     !string.IsNullOrEmpty(
                                         _activeSceneAddress) &&
-                                    string.Equals(
-                                        _activeSceneAddress,
-                                        sceneEntry.SceneAddress,
-                                        StringComparison.OrdinalIgnoreCase);
+                                    (_keepLoadedSceneAsRuntimeShell ||
+                                     string.Equals(
+                                         _activeSceneAddress,
+                                         sceneEntry.SceneAddress,
+                                         StringComparison.OrdinalIgnoreCase));
 
             var candidateScope = new JxqyResourceScope(
                 $"map:{Guid.NewGuid():N}:{mapStableId}");
@@ -272,21 +282,14 @@ namespace Jxqy.UnityAdapters
                                  : 1);
             try
             {
-                for (int index = 0; index < group.Resources.Count; index++)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    JxqyPreloadResource resource = group.Resources[index];
-                    candidateLeases.Add(await LoadResourceAsync(
-                        resource,
-                        candidateScope,
-                        cancellationToken));
-                    progress?.Report(new JxqyPreloadProgress(
-                        mapStableId,
-                        index + 1,
-                        totalSteps,
-                        resource.Address,
-                        "Resource"));
-                }
+                await LoadResourceBatchesAsync(
+                    group.Resources,
+                    candidateScope,
+                    candidateLeases,
+                    mapStableId,
+                    totalSteps,
+                    progress,
+                    cancellationToken);
 
                 if (sceneEntry != null && !reuseActiveScene)
                 {
@@ -366,9 +369,12 @@ namespace Jxqy.UnityAdapters
 
             JxqyResourceScope previousScope = _activeMapScope;
             string previousSceneAddress = _activeSceneAddress;
+            string committedSceneAddress = reuseActiveScene
+                ? previousSceneAddress
+                : sceneEntry?.SceneAddress ?? string.Empty;
             _activeMapScope = candidateScope;
             _activeMapStableId = mapStableId;
-            _activeSceneAddress = sceneEntry?.SceneAddress ?? string.Empty;
+            _activeSceneAddress = committedSceneAddress;
             JxqyResourceAddressCatalog.SetActiveOwner(
                 ResolveSceneKey(group));
             try
@@ -437,19 +443,14 @@ namespace Jxqy.UnityAdapters
             var leases = new List<IDisposable>(group.Resources.Count);
             try
             {
-                for (int index = 0; index < group.Resources.Count; index++)
-                {
-                    JxqyPreloadResource resource = group.Resources[index];
-                    leases.Add(await LoadResourceAsync(
-                        resource,
-                        scope,
-                        cancellationToken));
-                    progress?.Report(new JxqyPreloadProgress(
-                        group.OwnerStableId,
-                        index + 1,
-                        group.Resources.Count,
-                        resource.Address));
-                }
+                await LoadResourceBatchesAsync(
+                    group.Resources,
+                    scope,
+                    leases,
+                    group.OwnerStableId,
+                    group.Resources.Count,
+                    progress,
+                    cancellationToken);
                 _sharedScopes.Add(kind, scope);
             }
             catch
@@ -601,6 +602,59 @@ namespace Jxqy.UnityAdapters
                 address,
                 scope,
                 cancellationToken);
+        }
+
+        private async UniTask LoadResourceBatchesAsync(
+            IReadOnlyList<JxqyPreloadResource> resources,
+            JxqyResourceScope scope,
+            List<IDisposable> leases,
+            string ownerStableId,
+            int progressTotal,
+            IProgress<JxqyPreloadProgress> progress,
+            CancellationToken cancellationToken)
+        {
+            for (int batchStart = 0;
+                 batchStart < resources.Count;
+                 batchStart += ResourceLoadBatchSize)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                int batchCount = Math.Min(
+                    ResourceLoadBatchSize,
+                    resources.Count - batchStart);
+                var pending = new UniTask<IDisposable>[batchCount];
+                for (int offset = 0; offset < batchCount; offset++)
+                {
+                    pending[offset] = LoadResourceAsync(
+                        resources[batchStart + offset],
+                        scope,
+                        cancellationToken);
+                }
+
+                Exception firstError = null;
+                for (int offset = 0; offset < batchCount; offset++)
+                {
+                    JxqyPreloadResource resource =
+                        resources[batchStart + offset];
+                    try
+                    {
+                        IDisposable lease = await pending[offset];
+                        leases.Add(lease);
+                        progress?.Report(new JxqyPreloadProgress(
+                            ownerStableId,
+                            batchStart + offset + 1,
+                            progressTotal,
+                            resource.Address,
+                            "Resource"));
+                    }
+                    catch (Exception exception)
+                    {
+                        firstError ??= exception;
+                    }
+                }
+
+                if (firstError != null)
+                    throw firstError;
+            }
         }
 
         private void ThrowIfDisposed()

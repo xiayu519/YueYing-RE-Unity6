@@ -30,6 +30,8 @@ namespace Jxqy.Bootstrap
         public JxqyAnimationMetadata Walk;
         public readonly Dictionary<int, JxqyAnimationMetadata> Actions =
             new();
+        public readonly Dictionary<int, string> ActionFileNames = new();
+        public readonly HashSet<int> LoadingActions = new();
         public readonly Dictionary<int, string> StateSounds = new();
         public JxqyAnimationMetadata Current;
         public JxqyCharacterState CurrentState =
@@ -49,6 +51,13 @@ namespace Jxqy.Bootstrap
         public JxqyAnimationMetadata Flying;
         public JxqyAnimationMetadata Vanish;
         public JxqyAnimationMetadata SuperMode;
+    }
+
+    internal sealed class JxqyLoadedMapResource
+    {
+        public JxqyPreloadResource Resource;
+        public JxqyAssetLease<TextAsset> TextLease;
+        public JxqyAssetLease<Texture2D> TextureLease;
     }
 
     internal sealed class JxqyRuntimeMagicVisual
@@ -160,6 +169,20 @@ namespace Jxqy.Bootstrap
             new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, JxqyAnimationMetadata>
             _dynamicAnimationCache =
+                new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _dynamicTextCache =
+            new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, AsyncLazy<string>>
+            _dynamicTextLoadCache =
+                new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, AsyncLazy<JxqyAnimationMetadata>>
+            _dynamicAnimationLoadTasks =
+                new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, AsyncLazy<Texture2D>>
+            _dynamicTextureLoadTasks =
+                new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, JxqyItemDefinition>
+            _itemDefinitionCache =
                 new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, JxqyRuntimeMagicAssets>
             _magicVisualAssets =
@@ -705,75 +728,97 @@ namespace Jxqy.Bootstrap
             TextAsset candidateMapData = null;
             try
             {
-                for (int index = 0; index < group.Resources.Count; index++)
+                for (int batchStart = 0;
+                     batchStart < group.Resources.Count;
+                     batchStart +=
+                         JxqyMapPreloadCoordinator.ResourceLoadBatchSize)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    JxqyPreloadResource resource = group.Resources[index];
-                    reportStatus?.Invoke(
-                        $"加载地图资源 {index + 1}/{group.Resources.Count}：" +
-                        resource.ResourceKind);
-                    switch (resource.ResourceKind)
+                    int batchCount = Math.Min(
+                        JxqyMapPreloadCoordinator.ResourceLoadBatchSize,
+                        group.Resources.Count - batchStart);
+                    var tasks =
+                        new UniTask<JxqyLoadedMapResource>[batchCount];
+                    for (int offset = 0;
+                         offset < batchCount;
+                         offset++)
                     {
-                        case "MapMetadata":
+                        cancellationToken.ThrowIfCancellationRequested();
+                        int resourceIndex = batchStart + offset;
+                        JxqyPreloadResource resource =
+                            group.Resources[resourceIndex];
+                        reportStatus?.Invoke(
+                            $"加载地图资源 " +
+                            $"{resourceIndex + 1}/{group.Resources.Count}：" +
+                            resource.ResourceKind);
+                        tasks[offset] = LoadMapResourceAsync(
+                            resource,
+                            candidateScope,
+                            cancellationToken);
+                    }
+
+                    Exception firstException = null;
+                    for (int offset = 0;
+                         offset < tasks.Length;
+                         offset++)
+                    {
+                        try
                         {
-                            JxqyAssetLease<TextAsset> lease =
-                                await _resources.LoadAsync<TextAsset>(
-                                    resource.Address,
-                                    candidateScope,
-                                    cancellationToken);
-                            candidateLeases.Add(lease);
-                            candidateMetadata =
-                                JsonUtility.FromJson<JxqyMapMetadata>(
-                                    lease.Asset.text);
-                            break;
-                        }
-                        case "MapData":
-                        {
-                            JxqyAssetLease<TextAsset> lease =
-                                await _resources.LoadAsync<TextAsset>(
-                                    resource.Address,
-                                    candidateScope,
-                                    cancellationToken);
-                            candidateLeases.Add(lease);
-                            candidateMapData = lease.Asset;
-                            break;
-                        }
-                        case "AnimationMetadata":
-                        {
-                            JxqyAssetLease<TextAsset> lease =
-                                await _resources.LoadAsync<TextAsset>(
-                                    resource.Address,
-                                    candidateScope,
-                                    cancellationToken);
-                            candidateLeases.Add(lease);
-                            JxqyAnimationMetadata animation =
-                                JsonUtility.FromJson<JxqyAnimationMetadata>(
-                                    lease.Asset.text);
-                            if (animation == null ||
-                                string.IsNullOrWhiteSpace(
-                                    animation.SourceStableId))
+                            JxqyLoadedMapResource loaded =
+                                await tasks[offset];
+                            JxqyPreloadResource resource = loaded.Resource;
+                            switch (resource.ResourceKind)
                             {
-                                throw new InvalidOperationException(
-                                    $"动画元数据无效：{resource.Address}");
+                                case "MapMetadata":
+                                    candidateLeases.Add(loaded.TextLease);
+                                    candidateMetadata =
+                                        JsonUtility.FromJson<
+                                            JxqyMapMetadata>(
+                                            loaded.TextLease.Asset.text);
+                                    break;
+                                case "MapData":
+                                    candidateLeases.Add(loaded.TextLease);
+                                    candidateMapData =
+                                        loaded.TextLease.Asset;
+                                    break;
+                                case "AnimationMetadata":
+                                {
+                                    candidateLeases.Add(loaded.TextLease);
+                                    JxqyAnimationMetadata animation =
+                                        JsonUtility.FromJson<
+                                            JxqyAnimationMetadata>(
+                                            loaded.TextLease.Asset.text);
+                                    if (animation == null ||
+                                        string.IsNullOrWhiteSpace(
+                                            animation.SourceStableId))
+                                    {
+                                        throw new InvalidOperationException(
+                                            $"动画元数据无效：" +
+                                            resource.Address);
+                                    }
+                                    candidateAnimations[
+                                        animation.SourceStableId] =
+                                        animation;
+                                    break;
+                                }
+                                case "AnimationAtlas":
+                                    candidateTextures.Add((
+                                        resource.Address,
+                                        loaded.TextureLease.Asset,
+                                        loaded.TextureLease));
+                                    break;
                             }
-                            candidateAnimations[
-                                animation.SourceStableId] = animation;
-                            break;
                         }
-                        case "AnimationAtlas":
+                        catch (Exception exception)
                         {
-                            JxqyAssetLease<Texture2D> lease =
-                                await _resources.LoadAsync<Texture2D>(
-                                    resource.Address,
-                                    candidateScope,
-                                    cancellationToken);
-                            candidateTextures.Add((
-                                resource.Address,
-                                lease.Asset,
-                                lease));
-                            break;
+                            firstException ??= exception;
                         }
                     }
+
+                    // Let every operation started in this batch settle before
+                    // rollback can release the scope. A late successful task
+                    // must never register a lease after scope cleanup.
+                    if (firstException != null)
+                        throw firstException;
                 }
 
                 if (candidateMetadata == null ||
@@ -828,6 +873,38 @@ namespace Jxqy.Bootstrap
                 _animations);
             _worldCommands =
                 new JxqyWorldDrawCommandBuilder(_map.Columns);
+        }
+
+        private async UniTask<JxqyLoadedMapResource>
+            LoadMapResourceAsync(
+                JxqyPreloadResource resource,
+                JxqyResourceScope scope,
+                CancellationToken cancellationToken)
+        {
+            var loaded = new JxqyLoadedMapResource
+            {
+                Resource = resource,
+            };
+            switch (resource.ResourceKind)
+            {
+                case "MapMetadata":
+                case "MapData":
+                case "AnimationMetadata":
+                    loaded.TextLease =
+                        await _resources.LoadAsync<TextAsset>(
+                            resource.Address,
+                            scope,
+                            cancellationToken);
+                    break;
+                case "AnimationAtlas":
+                    loaded.TextureLease =
+                        await _resources.LoadAsync<Texture2D>(
+                            resource.Address,
+                            scope,
+                            cancellationToken);
+                    break;
+            }
+            return loaded;
         }
 
         private async UniTask ReleaseActiveMapAssetsAsync()
@@ -2747,6 +2824,7 @@ namespace Jxqy.Bootstrap
             {
                 npc.SetActionEnabled(characterState, false);
                 visual.Actions.Remove(state);
+                visual.ActionFileNames.Remove(state);
                 visual.CurrentState = (JxqyCharacterState)(-1);
                 visual.CurrentStateVersion = -1;
                 return;
@@ -2757,6 +2835,7 @@ namespace Jxqy.Bootstrap
             {
                 npc.SetActionEnabled(characterState, false);
                 visual.Actions.Remove(state);
+                visual.ActionFileNames.Remove(state);
                 JxqyResourceAddressCatalog.ReportMissing(
                     "SetNpcActionFile",
                     fileName);
@@ -2768,6 +2847,7 @@ namespace Jxqy.Bootstrap
                     fileName,
                     this.GetCancellationTokenOnDestroy());
             visual.Actions[state] = metadata;
+            visual.ActionFileNames[state] = fileName;
             npc.SetActionEnabled(characterState, true);
             if (state == (int)JxqyCharacterState.Stand)
                 visual.Stand = metadata;
@@ -2824,19 +2904,70 @@ namespace Jxqy.Bootstrap
             }
             foreach (string atlasAddress in metadata.AtlasAddresses)
             {
-                if (_textures.TryGet(atlasAddress, out _))
-                    continue;
-                JxqyAssetLease<Texture2D> atlasLease =
-                    await _resources.LoadAsync<Texture2D>(
-                        atlasAddress,
-                        _mapScope,
-                        cancellationToken);
-                _textures.Register(
+                await LoadDynamicTextureAsync(
                     atlasAddress,
-                    atlasLease.Asset,
-                    atlasLease);
+                    cancellationToken);
             }
             return metadata;
+        }
+
+        private UniTask<Texture2D> LoadDynamicTextureAsync(
+            string address,
+            CancellationToken cancellationToken)
+        {
+            if (_textures.TryGet(address, out Texture2D cached))
+                return UniTask.FromResult(cached);
+            if (_dynamicTextureLoadTasks.TryGetValue(
+                    address,
+                    out AsyncLazy<Texture2D> pending))
+            {
+                return AwaitDynamicTextureLoadAsync(address, pending);
+            }
+            var task = new AsyncLazy<Texture2D>(() =>
+                LoadAndRegisterDynamicTextureAsync(
+                        address,
+                        cancellationToken));
+            _dynamicTextureLoadTasks.Add(address, task);
+            return AwaitDynamicTextureLoadAsync(address, task);
+        }
+
+        private async UniTask<Texture2D> AwaitDynamicTextureLoadAsync(
+            string address,
+            AsyncLazy<Texture2D> task)
+        {
+            try
+            {
+                return await task.Task;
+            }
+            finally
+            {
+                if (_dynamicTextureLoadTasks.TryGetValue(
+                        address,
+                        out AsyncLazy<Texture2D> current) &&
+                    ReferenceEquals(current, task))
+                {
+                    _dynamicTextureLoadTasks.Remove(address);
+                }
+            }
+        }
+
+        private async UniTask<Texture2D>
+            LoadAndRegisterDynamicTextureAsync(
+                string address,
+                CancellationToken cancellationToken)
+        {
+            JxqyAssetLease<Texture2D> lease =
+                await _resources.LoadAsync<Texture2D>(
+                    address,
+                    _mapScope,
+                    cancellationToken);
+            if (_textures.TryGet(address, out Texture2D cached))
+            {
+                lease.Dispose();
+                return cached;
+            }
+            _textures.Register(address, lease.Asset, lease);
+            return lease.Asset;
         }
 
         private static bool TryResolveLegacyCharacterAnimation(
@@ -3051,6 +3182,7 @@ namespace Jxqy.Bootstrap
                     safeFileName,
                     out List<JxqyNpc> saved))
             {
+                var loaded = new List<JxqyNpc>(saved.Count);
                 foreach (JxqyNpc source in saved)
                 {
                     JxqyNpc npc = CloneNpc(source);
@@ -3679,6 +3811,92 @@ namespace Jxqy.Bootstrap
             RefreshActorVisual(npc);
         }
 
+                    !ReferenceEquals(current, visual) ||
+                    !visual.ActionFileNames.TryGetValue(
+                        state,
+                        out string currentFileName) ||
+                    !string.Equals(
+                        currentFileName,
+                        fileName,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+                visual.Actions[state] = metadata;
+                if (state == (int)JxqyCharacterState.Stand)
+                    visual.Stand = metadata;
+                else if (state == (int)JxqyCharacterState.Walk)
+                    visual.Walk = metadata;
+                visual.CurrentState = (JxqyCharacterState)(-1);
+                visual.CurrentStateVersion = -1;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception exception)
+            {
+                Debug.LogError(
+                    $"JXQY-ACTION failed to lazy-load '{fileName}' " +
+                    $"for NPC '{npc?.Name}': " +
+                    exception.GetBaseException().Message,
+                    this);
+            }
+            finally
+            {
+                visual?.LoadingActions.Remove(state);
+            }
+        }
+
+        private bool EnsureNpcActionLoading(
+            JxqyNpc npc,
+            JxqyRuntimeActorVisual visual,
+            JxqyCharacterState state)
+        {
+            if (visual == null ||
+                !TryResolveCharacterActionFile(
+                    visual.ActionFileNames,
+                    state,
+                    out int actionState,
+                    out string fileName) ||
+                visual.Actions.ContainsKey(actionState))
+            {
+                return false;
+            }
+            if (visual.LoadingActions.Add(actionState))
+            {
+                LoadNpcActionOnDemandAsync(
+                    npc,
+                    visual,
+                    actionState,
+                    fileName).Forget();
+            }
+            return true;
+        }
+
+        private static bool TryResolveCharacterActionFile(
+            IReadOnlyDictionary<int, string> actionFileNames,
+            JxqyCharacterState state,
+            out int actionState,
+            out string fileName)
+        {
+            actionState = (int)state;
+            if (actionFileNames.TryGetValue(actionState, out fileName))
+                return true;
+            JxqyCharacterState fallback = state switch
+            {
+                JxqyCharacterState.Stand1 => JxqyCharacterState.Stand,
+                JxqyCharacterState.FightStand => JxqyCharacterState.Stand,
+                JxqyCharacterState.FightWalk => JxqyCharacterState.Walk,
+                JxqyCharacterState.FightRun => JxqyCharacterState.Run,
+                JxqyCharacterState.FightJump => JxqyCharacterState.Jump,
+                JxqyCharacterState.Attack1 => JxqyCharacterState.Attack,
+                JxqyCharacterState.Attack2 => JxqyCharacterState.Attack,
+                _ => JxqyCharacterState.Stand,
+            };
+            actionState = (int)fallback;
+            return actionFileNames.TryGetValue(actionState, out fileName);
+        }
+
         private async UniTask CreateObjectVisualAsync(
             JxqyWorldObject worldObject,
             CancellationToken cancellationToken)
@@ -3797,7 +4015,7 @@ namespace Jxqy.Bootstrap
             }
         }
 
-        private async UniTask<JxqyAnimationMetadata>
+        private UniTask<JxqyAnimationMetadata>
             LoadDynamicAnimationAsync(
                 string fileName,
                 CancellationToken cancellationToken,
@@ -3824,18 +4042,62 @@ namespace Jxqy.Bootstrap
                     metadataAddress,
                     out JxqyAnimationMetadata cached))
             {
-                return cached;
+                return UniTask.FromResult(cached);
             }
+            if (_dynamicAnimationLoadTasks.TryGetValue(
+                    metadataAddress,
+                    out AsyncLazy<JxqyAnimationMetadata> pending))
+            {
+                return AwaitDynamicAnimationLoadAsync(
+                    metadataAddress,
+                    pending);
+            }
+            var task = new AsyncLazy<JxqyAnimationMetadata>(() =>
+                LoadAndCacheDynamicAnimationAsync(
+                        metadataAddress,
+                        fileName,
+                        cancellationToken));
+            _dynamicAnimationLoadTasks.Add(metadataAddress, task);
+            return AwaitDynamicAnimationLoadAsync(metadataAddress, task);
+        }
+
+        private async UniTask<JxqyAnimationMetadata>
+            AwaitDynamicAnimationLoadAsync(
+                string metadataAddress,
+                AsyncLazy<JxqyAnimationMetadata> task)
+        {
+            try
+            {
+                return await task.Task;
+            }
+            finally
+            {
+                if (_dynamicAnimationLoadTasks.TryGetValue(
+                        metadataAddress,
+                        out AsyncLazy<JxqyAnimationMetadata> current) &&
+                    ReferenceEquals(current, task))
+                {
+                    _dynamicAnimationLoadTasks.Remove(metadataAddress);
+                }
+            }
+        }
+
+        private async UniTask<JxqyAnimationMetadata>
+            LoadAndCacheDynamicAnimationAsync(
+                string metadataAddress,
+                string fileName,
+                CancellationToken cancellationToken)
+        {
             JxqyAnimationMetadata metadata =
                 await LoadLegacyCharacterAnimationAsync(
                     metadataAddress,
                     fileName,
                     cancellationToken);
-            _dynamicAnimationCache.Add(metadataAddress, metadata);
+            _dynamicAnimationCache[metadataAddress] = metadata;
             return metadata;
         }
 
-        private async UniTask<string> LoadDynamicTextAsync(
+        private UniTask<string> LoadDynamicTextAsync(
             string relativeDirectory,
             string safeFileName,
             CancellationToken cancellationToken)
@@ -3844,11 +4106,55 @@ namespace Jxqy.Bootstrap
                 $"jxqy/text/{relativeDirectory.Trim('/')}/" +
                 $"{safeFileName}/content.txt";
             address = address.ToLowerInvariant();
+            if (_dynamicTextCache.TryGetValue(
+                    address,
+                    out string cached))
+            {
+                return UniTask.FromResult(cached);
+            }
             if (!JxqyResourceAddressCatalog.Contains(address))
             {
                 throw new FileNotFoundException(
                     $"Converted legacy text asset is missing: {address}");
             }
+            if (_dynamicTextLoadCache.TryGetValue(
+                    address,
+                    out AsyncLazy<string> pending))
+            {
+                return AwaitDynamicTextLoadAsync(address, pending);
+            }
+            var task = new AsyncLazy<string>(() =>
+                LoadDynamicTextCoreAsync(
+                    address,
+                    cancellationToken));
+            _dynamicTextLoadCache.Add(address, task);
+            return AwaitDynamicTextLoadAsync(address, task);
+        }
+
+        private async UniTask<string> AwaitDynamicTextLoadAsync(
+            string address,
+            AsyncLazy<string> task)
+        {
+            try
+            {
+                return await task.Task;
+            }
+            finally
+            {
+                if (_dynamicTextLoadCache.TryGetValue(
+                        address,
+                        out AsyncLazy<string> current) &&
+                    ReferenceEquals(current, task))
+                {
+                    _dynamicTextLoadCache.Remove(address);
+                }
+            }
+        }
+
+        private async UniTask<string> LoadDynamicTextCoreAsync(
+            string address,
+            CancellationToken cancellationToken)
+        {
             JxqyResourceScope scope = _activeMapAssetScope ?? _mapScope;
             JxqyAssetLease<TextAsset> lease =
                 await _resources.LoadAsync<TextAsset>(
@@ -3856,7 +4162,9 @@ namespace Jxqy.Bootstrap
                     scope,
                     cancellationToken);
             _activeMapLeases.Add(lease);
-            return lease.Asset.text;
+            string text = lease.Asset.text;
+            _dynamicTextCache[address] = text;
+            return text;
         }
 
         private async UniTask LoadMagicExperienceRulesAsync(
@@ -4012,6 +4320,35 @@ namespace Jxqy.Bootstrap
                     sounds[(int)state] = sound;
             }
             return sounds;
+        }
+
+        private static Dictionary<int, string> ParseCharacterStateImages(
+            Dictionary<string, Dictionary<string, string>> sections)
+        {
+            var images = new Dictionary<int, string>();
+            foreach (JxqyCharacterState state in
+                     Enum.GetValues(typeof(JxqyCharacterState)))
+            {
+                string fileName = GetStateImage(
+                    sections,
+                    state.ToString());
+                if (string.IsNullOrWhiteSpace(fileName))
+                    continue;
+                if (!JxqyResourceAddressCatalog.TryResolveAnimationAddress(
+                        fileName,
+                        out _,
+                        "character",
+                        "object"))
+                {
+                    Debug.LogWarning(
+                        $"JXQY-ACTION optional state animation " +
+                        $"'{fileName}' for {state} was not converted; " +
+                        "using the original fallback state.");
+                    continue;
+                }
+                images[(int)state] = fileName;
+            }
+            return images;
         }
 
         private async UniTask<Dictionary<int, JxqyAnimationMetadata>>
@@ -4193,11 +4530,20 @@ namespace Jxqy.Bootstrap
             LoadItemDefinitionAsync(string fileName)
         {
             string safeFileName = SafeLegacyFileName(fileName, ".ini");
+            if (_itemDefinitionCache.TryGetValue(
+                    safeFileName,
+                    out JxqyItemDefinition cached))
+            {
+                return cached;
+            }
             string text = await LoadDynamicTextAsync(
                 "ini/goods",
                 safeFileName,
                 this.GetCancellationTokenOnDestroy());
-            return ParseItemDefinition(safeFileName, text);
+            JxqyItemDefinition definition =
+                ParseItemDefinition(safeFileName, text);
+            _itemDefinitionCache[safeFileName] = definition;
+            return definition;
         }
 
         private async UniTask<JxqyItemDefinition>
@@ -5640,6 +5986,22 @@ namespace Jxqy.Bootstrap
                 bool statusDeath = TryGetStatusDeathAnimation(
                     npc,
                     out JxqyAnimationMetadata statusDeathAnimation);
+                bool actionPending = !statusDeath &&
+                                     EnsureNpcActionLoading(
+                                         npc,
+                                         state,
+                                         npc.State);
+                if (actionPending)
+                {
+                    // The original resolves a state image synchronously when
+                    // the state first uses it. Until the localized async load
+                    // completes, hold the current pose and do not let a Stand
+                    // fallback finish Attack/Hurt/Death early.
+                    state.Visual.Animation.SetDirection(
+                        npc.CurrentDirection);
+                    ApplyActorPosition(npc, state);
+                    continue;
+                }
                 JxqyAnimationMetadata desired = statusDeath
                     ? statusDeathAnimation
                     : ResolveCharacterAnimation(
@@ -6976,7 +7338,8 @@ namespace Jxqy.Bootstrap
                    _npcVisuals.TryGetValue(
                        npc,
                        out JxqyRuntimeActorVisual visual) &&
-                   visual.Actions.ContainsKey((int)state);
+                   (visual.Actions.ContainsKey((int)state) ||
+                    visual.ActionFileNames.ContainsKey((int)state));
         }
 
         private void TryBeginCultivationAttackAction(
@@ -7434,6 +7797,15 @@ namespace Jxqy.Bootstrap
             if (!state.Actions.ContainsKey(
                     (int)JxqyCharacterState.Death))
             {
+                if (state.ActionFileNames.ContainsKey(
+                        (int)JxqyCharacterState.Death))
+                {
+                    EnsureNpcActionLoading(
+                        npc,
+                        state,
+                        JxqyCharacterState.Death);
+                    return false;
+                }
                 return true;
             }
             return state.CurrentState == JxqyCharacterState.Death &&
@@ -8699,6 +9071,7 @@ namespace Jxqy.Bootstrap
             _activeObjectFileName =
                 save.World.ObjectFile ?? string.Empty;
 
+            var restoredNpcs = new List<JxqyNpc>(save.World.Npcs.Count);
             foreach (JxqySaveNpcState entry in save.World.Npcs)
             {
                 JxqyNpc npc = RestoreNpc(entry);
@@ -8710,18 +9083,30 @@ namespace Jxqy.Bootstrap
                     if (npc.IsBodyCreated)
                         _finalizedNpcDeaths.Add(npc);
                 }
-                await CreateNpcVisualAsync(npc, cancellationToken);
+                restoredNpcs.Add(npc);
             }
+            await CreateNpcVisualsAsync(
+                restoredNpcs,
+                cancellationToken);
+            var restoredObjects =
+                new List<JxqyWorldObject>(save.World.Objects.Count);
             foreach (JxqySaveObjectState entry in save.World.Objects)
             {
                 JxqyWorldObject worldObject = RestoreObject(entry);
                 _objects.Add(worldObject);
                 if (!worldObject.IsRemoved)
-                {
-                    await CreateObjectVisualAsync(
-                        worldObject,
-                        cancellationToken);
-                }
+                    restoredObjects.Add(worldObject);
+            }
+            await PreloadObjectResourcesAsync(
+                restoredObjects,
+                cancellationToken);
+            for (int index = 0;
+                 index < restoredObjects.Count;
+                 index++)
+            {
+                await CreateObjectVisualAsync(
+                    restoredObjects[index],
+                    cancellationToken);
             }
 
             _trapRegistry = new JxqyTrapRegistry();
