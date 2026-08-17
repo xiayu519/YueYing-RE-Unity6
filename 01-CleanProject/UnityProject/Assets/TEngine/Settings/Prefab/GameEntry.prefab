@@ -298,7 +298,7 @@ MonoBehaviour:
   textHelperTypeName: TEngine.DefaultTextHelper
   logHelperTypeName: TEngine.DefaultLogHelper
   jsonHelperTypeName: TEngine.DefaultJsonHelper
-  frameRate: 120
+  frameRate: 60
   gameSpeed: 1
   runInBackground: 1
   neverSleep: 1

@@ -106,6 +106,21 @@ namespace Jxqy.Domain.Simulation
             return ClearHeartEffectiveHealingExperience;
         }
 
+        public static string ResolvePlayerMagicExperienceId(
+            string projectileMagicId,
+            bool projectileMagicIsLearned,
+            string selectedMagicId)
+        {
+            // Original MagicSprite uses BelongMagic.ItemInfo when the
+            // projectile came from a learned martial art. Embedded FlyIni
+            // and cultivation AttackFile magic has no ItemInfo, so contact
+            // experience belongs to Player.CurrentMagicInUse instead.
+            return projectileMagicIsLearned &&
+                   !string.IsNullOrWhiteSpace(projectileMagicId)
+                ? projectileMagicId
+                : selectedMagicId ?? string.Empty;
+        }
+
         public static int CalculateDeathExperience(
             JxqyCharacter beneficiary,
             JxqyCharacter defeated)
@@ -144,6 +159,44 @@ namespace Jxqy.Domain.Simulation
             character.Experience = 0;
             character.LevelUpExperience = 0;
             character.Level = level;
+        }
+    }
+
+    public static class JxqyLegacyMagicTiming
+    {
+        private const int AnimationElapsedMillisecondsPerTick = 16;
+        private const float FixedTicksPerSecond = 60f;
+
+        public static int GetPositiveLifeFrameActiveTickCount(
+            int lifeFrame,
+            int animationIntervalMilliseconds)
+        {
+            if (lifeFrame <= 0)
+                return 0;
+
+            long safeInterval = Math.Max(
+                0,
+                animationIntervalMilliseconds);
+            // XNA runs at 60 Hz, but Sprite.Update truncates each fixed
+            // elapsed time to 16 ms and advances at most one ASF frame when
+            // accumulatedElapsed > Interval. MagicSprite checks collision
+            // before Sprite.Update, so one final collision/movement tick
+            // occurs after the requested animation frames finish.
+            long thresholdTicks =
+                safeInterval * lifeFrame /
+                AnimationElapsedMillisecondsPerTick + 1L;
+            long playbackTicks = Math.Max((long)lifeFrame, thresholdTicks);
+            return (int)Math.Min(int.MaxValue, playbackTicks + 1L);
+        }
+
+        public static float GetPositiveLifeFrameActiveSeconds(
+            int lifeFrame,
+            int animationIntervalMilliseconds)
+        {
+            return GetPositiveLifeFrameActiveTickCount(
+                       lifeFrame,
+                       animationIntervalMilliseconds) /
+                   FixedTicksPerSecond;
         }
     }
 
@@ -940,12 +993,12 @@ namespace Jxqy.Domain.Simulation
             if (HasStatus(JxqyStatusKind.Poisoned))
             {
                 _poisonAccumulator += elapsedSeconds;
-                while (_poisonAccumulator >= 0.25f && !IsDead)
+                if (_poisonAccumulator > 0.25f)
                 {
-                    _poisonAccumulator -= 0.25f;
+                    _poisonAccumulator = 0;
                     string poisonOwner = PoisonExperienceOwnerName;
                     bool lethal = Life <= 10;
-                    TakeDamage(10);
+                    ApplyPoisonDamage(10);
                     if (lethal && IsDead)
                     {
                         PoisonDeathExperienceOwnerName =
@@ -955,6 +1008,17 @@ namespace Jxqy.Domain.Simulation
             }
             TickStatuses(elapsedSeconds);
             TickActiveMagicEffects(elapsedSeconds);
+        }
+
+        private void ApplyPoisonDamage(int amount)
+        {
+            if (amount <= 0 || IsDead)
+                return;
+            int applied = Math.Min(Life, amount);
+            Life -= applied;
+            Damaged?.Invoke(this, applied, null);
+            if (Life <= 0)
+                Die();
         }
 
         private void TickActiveMagicEffects(float elapsedSeconds)
@@ -995,8 +1059,7 @@ namespace Jxqy.Domain.Simulation
         {
             IsPetrified = HasStatus(JxqyStatusKind.Petrified);
             IsMovementDisabled =
-                HasStatus(JxqyStatusKind.MovementDisabled) ||
-                HasStatus(JxqyStatusKind.Frozen);
+                HasStatus(JxqyStatusKind.MovementDisabled);
         }
     }
 
@@ -1311,10 +1374,13 @@ namespace Jxqy.Domain.Simulation
                 throw new ArgumentNullException(nameof(source));
             if (magic == null)
                 throw new ArgumentNullException(nameof(magic));
-            if (source.IsDead || source.HasStatus(JxqyStatusKind.SkillDisabled) ||
-                source.Mana < magic.ManaCost ||
-                source.Thew < magic.ThewCost ||
-                source.Life <= magic.LifeCost)
+            bool consumesPlayerResources = source is JxqyPlayer;
+            if (source.IsDead ||
+                source.HasStatus(JxqyStatusKind.SkillDisabled) ||
+                consumesPlayerResources &&
+                (source.Mana < magic.ManaCost ||
+                 source.Thew < magic.ThewCost ||
+                 source.Life <= magic.LifeCost))
                 return false;
 
             // The legacy target argument is not a generic homing target. It
@@ -1328,9 +1394,15 @@ namespace Jxqy.Domain.Simulation
                 destination = target.PositionInWorld;
             }
 
-            source.Mana -= Math.Max(0, magic.ManaCost);
-            source.Thew -= Math.Max(0, magic.ThewCost);
-            source.TakeDamage(Math.Max(0, magic.LifeCost));
+            // Original Character/Partner basic-attack magic is emitted by
+            // MagicManager without paying player resources. Only the Player
+            // override validates and deducts Mana/Thew/Life costs.
+            if (consumesPlayerResources)
+            {
+                source.Mana -= Math.Max(0, magic.ManaCost);
+                source.Thew -= Math.Max(0, magic.ThewCost);
+                source.TakeDamage(Math.Max(0, magic.LifeCost));
+            }
             // The caller owns the presentation state. Normal skills and
             // ranged basic attacks reach this method only after their action
             // animation finishes, while be-attacked retaliation is emitted

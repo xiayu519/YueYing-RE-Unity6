@@ -4,7 +4,7 @@
 
 > 本项目仅用于学习、研究与技术交流。Git 仓库不包含原游戏美术、音频、视频等资源；运行游戏所需资源必须由使用者单独获取并导入。
 
-> 开发进度说明：由于开发者精力有限，目前人工流程只验证到芭蕉小筑遇到第一位女配角。后续流程如遇到 Bug，欢迎通过 [GitHub Issues](https://github.com/xiayu519/YueYing-RE-Unity6/issues) 反馈，也欢迎基于本工程自行排查和修复。
+> 开发进度说明：当前版本已完成一次人工全流程验证。后续如遇到遗漏问题，欢迎通过 [GitHub Issues](https://github.com/xiayu519/YueYing-RE-Unity6/issues) 反馈，也欢迎基于本工程自行排查和修复。
 
 ## 运行截图
 
@@ -16,7 +16,7 @@
 
 - [Unity 月影传说 PC 体验包](https://github.com/xiayu519/YueYing-RE-Unity6/releases/download/windows-il2cpp-20260810/JxqyHD-Windows-x64-IL2CPP-20260810.zip)：下载后解压，运行 `JxqyHD.exe`。
 - [开发者资源包（百度网盘下载信息）](https://github.com/xiayu519/YueYing-RE-Unity6/releases/download/windows-il2cpp-20260810/JxqyResources-20260810-BaiduNetdisk.txt)：TXT 内含 `JxqyResources-20260810.unitypackage` 的百度网盘链接和提取码。
-- [累计资源补丁（欢仙之刃与武当挑战数值）](https://github.com/xiayu519/YueYing-RE-Unity6/releases/download/windows-il2cpp-20260810/JxqyResources-Patch-20260812-HuanXianZhiRen.unitypackage)：导入基础资源包后再导入此补丁，并确认覆盖同名文件；已经导入基础资源包或旧版补丁的工程只需重新导入此补丁。
+- [累计资源补丁（全流程修复）](https://github.com/xiayu519/YueYing-RE-Unity6/releases/download/windows-il2cpp-20260810/JxqyResources-Patch-20260817-Cumulative.unitypackage)（[SHA-256](https://github.com/xiayu519/YueYing-RE-Unity6/releases/download/windows-il2cpp-20260810/JxqyResources-Patch-20260817-Cumulative.unitypackage.sha256)）：导入基础资源包后再导入此补丁，并确认覆盖同名文件；已经导入基础资源包或旧版补丁的工程只需导入此最新版累计补丁。
 
 ## 开发环境
 
@@ -29,7 +29,7 @@
 1. 克隆本仓库。
 2. 使用 Unity Hub 打开 `01-CleanProject/UnityProject`。
 3. 将单独下载的 `JxqyResources-20260810.unitypackage` 完整导入工程。
-4. 再导入 `JxqyResources-Patch-20260812-HuanXianZhiRen.unitypackage`，并确认覆盖同名文件。
+4. 再导入 `JxqyResources-Patch-20260817-Cumulative.unitypackage`，并确认覆盖同名文件。
 5. 等待 Unity 完成资源导入和脚本编译。
 6. 双击 `01-CleanProject/SetupResources.bat`。
 7. 确认窗口显示 `SimulationManifest=Refreshed` 和 `BundleBuild=Skipped`。

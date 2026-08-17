@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Text.RegularExpressions;
 using Jxqy.Domain.Simulation;
 
 namespace Jxqy.Domain.Scripting
@@ -62,6 +63,9 @@ namespace Jxqy.Domain.Scripting
 
     public static class JxqyLegacyScriptCommands
     {
+        private static readonly Regex LegacyComparisonIntegerPattern =
+            new Regex(@"-?[0-9]+", RegexOptions.CultureInvariant);
+
         public static readonly string[] Names =
         {
             "Add",
@@ -416,8 +420,16 @@ namespace Jxqy.Domain.Scripting
                 comparison = candidate;
                 string right = expression.Substring(index + candidate.Length)
                     .Trim();
+                // Original ScriptExecuter.If uses a permissive regex whose
+                // numeric capture skips preceding characters. Shipped
+                // scripts rely on this with expressions such as
+                // "$Event == $2026", where the right-side '$' is ignored.
+                Match expectedMatch =
+                    LegacyComparisonIntegerPattern.Match(right);
+                if (!expectedMatch.Success)
+                    return false;
                 return int.TryParse(
-                    right,
+                    expectedMatch.Value,
                     NumberStyles.Integer,
                     CultureInfo.InvariantCulture,
                     out expected);

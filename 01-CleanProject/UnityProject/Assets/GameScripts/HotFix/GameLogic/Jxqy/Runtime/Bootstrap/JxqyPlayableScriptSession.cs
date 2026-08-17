@@ -20,6 +20,7 @@ namespace Jxqy.Bootstrap
     {
         public Func<string> GetActiveMapName { get; set; }
         public Func<JxqyPlayer> GetPlayer { get; set; }
+        public Func<JxqyCharacter> GetPlayerKindCharacter { get; set; }
         public Func<JxqyNpcManager> GetNpcs { get; set; }
         public Func<JxqyObjectManager> GetObjects { get; set; }
         public Func<JxqyInventory> GetInventory { get; set; }
@@ -69,6 +70,7 @@ namespace Jxqy.Bootstrap
         public Func<string, bool, UniTask> OpenShopAsync { get; set; }
         public Func<int, UniTask> ChangePlayerAsync { get; set; }
         public Action<bool> SetInputDisabled { get; set; }
+        public Action<bool> SetNpcAiDisabled { get; set; }
         public Action<int, int> SetMapPosition { get; set; }
         public Action<string, int, string> SetNamedMapTrap { get; set; }
         public Action SaveMapTrapSnapshot { get; set; }
@@ -507,10 +509,16 @@ namespace Jxqy.Bootstrap
                     ShowNpc(instruction);
                     return JxqyScriptStep.Continue();
                 case "enablenpcai":
-                    Npcs.IsAiDisabled = false;
+                    if (_bindings.SetNpcAiDisabled != null)
+                        _bindings.SetNpcAiDisabled(false);
+                    else
+                        Npcs.EnableAi();
                     return JxqyScriptStep.Continue();
                 case "disablenpcai":
-                    Npcs.IsAiDisabled = true;
+                    if (_bindings.SetNpcAiDisabled != null)
+                        _bindings.SetNpcAiDisabled(true);
+                    else
+                        Npcs.DisableAi();
                     return JxqyScriptStep.Continue();
                 case "npcgoto":
                     return NpcGoto(context, instruction);
@@ -615,7 +623,7 @@ namespace Jxqy.Bootstrap
                     return PlayerGoto(instruction);
                 case "playergotoex":
                     return MoveCharacter(
-                        Player,
+                        PlayerKindCharacter,
                         new JxqyIntPoint(
                             Integer(instruction, 0),
                             Integer(instruction, 1)),
@@ -623,14 +631,14 @@ namespace Jxqy.Bootstrap
                         wait: false);
                 case "playergotodir":
                     return MoveInDirection(
-                        Player,
+                        PlayerKindCharacter,
                         Integer(instruction, 0),
                         Integer(instruction, 1),
                         run: false,
                         wait: true);
                 case "playerrunto":
                     return MoveCharacter(
-                        Player,
+                        PlayerKindCharacter,
                         new JxqyIntPoint(
                             Integer(instruction, 0),
                             Integer(instruction, 1)),
@@ -638,7 +646,7 @@ namespace Jxqy.Bootstrap
                         wait: true);
                 case "playerruntoex":
                     return MoveCharacter(
-                        Player,
+                        PlayerKindCharacter,
                         new JxqyIntPoint(
                             Integer(instruction, 0),
                             Integer(instruction, 1)),
@@ -646,7 +654,7 @@ namespace Jxqy.Bootstrap
                         wait: false);
                 case "playerjumpto":
                     return JumpCharacter(
-                        Player,
+                        PlayerKindCharacter,
                         new JxqyIntPoint(
                             Integer(instruction, 0),
                             Integer(instruction, 1)),
@@ -1059,6 +1067,11 @@ namespace Jxqy.Bootstrap
             throw new InvalidOperationException(
                 "The playable script has no active player.");
 
+        private JxqyCharacter PlayerKindCharacter =>
+            Required(_bindings.GetPlayerKindCharacter)() ??
+            throw new InvalidOperationException(
+                "The playable script has no player-kind character.");
+
         private void AddMoney(int amount)
         {
             Player.AddMoney(amount);
@@ -1458,7 +1471,7 @@ namespace Jxqy.Bootstrap
                 CancelDialogueWait();
             };
             _ui.DialogueCompleted += _dialogueCompleted;
-            Player.SetFighting(false);
+            PlayerKindCharacter.SetFighting(false);
             _ui.StartDialogue(dialogue);
             return JxqyScriptStep.WaitFor(
                 new JxqyPredicateScriptWait(() => completed));
@@ -1497,7 +1510,7 @@ namespace Jxqy.Bootstrap
                 CancelDialogueWait();
             };
             _ui.DialogueCompleted += _dialogueCompleted;
-            Player.SetFighting(false);
+            PlayerKindCharacter.SetFighting(false);
             _ui.StartDialogue(dialogue);
             return JxqyScriptStep.WaitFor(
                 new JxqyPredicateScriptWait(() => completed));
@@ -1807,7 +1820,7 @@ namespace Jxqy.Bootstrap
             int offset;
             if (instruction.Parameters.Count == 2)
             {
-                target = Player;
+                target = PlayerKindCharacter;
                 offset = 0;
             }
             else if (instruction.Parameters.Count == 3)
@@ -1844,10 +1857,11 @@ namespace Jxqy.Bootstrap
         private JxqyScriptStep PlayerGoto(
             JxqyScriptInstruction instruction)
         {
+            JxqyCharacter target = PlayerKindCharacter;
             var destination = new JxqyIntPoint(
                 Integer(instruction, 0),
                 Integer(instruction, 1));
-            if (Player.TilePosition.Equals(destination))
+            if (target.TilePosition.Equals(destination))
                 return JxqyScriptStep.Continue();
             IJxqyTileCollisionMap collision =
                 Required(_bindings.GetCollisionMap)() ??
@@ -1855,16 +1869,16 @@ namespace Jxqy.Bootstrap
                     "The playable script has no collision map.");
             IReadOnlyList<JxqyFloat2> path = JxqyPathfinder.FindPath(
                 collision,
-                Player.TilePosition,
+                target.TilePosition,
                 destination,
-                tile => IsOccupiedByOtherNpc(tile, Player));
-            if (path.Count < 2 || !Player.BeginPath(path))
+                tile => IsOccupiedByOtherNpc(tile, target));
+            if (path.Count < 2 || !target.BeginPath(path))
             {
-                Player.Stop();
+                target.Stop();
                 return JxqyScriptStep.Continue();
             }
             return JxqyScriptStep.WaitFor(
-                new JxqyPredicateScriptWait(() => !Player.HasPath));
+                new JxqyPredicateScriptWait(() => !target.HasPath));
         }
 
         private void SetNpcDirection(

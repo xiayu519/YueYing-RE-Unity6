@@ -247,11 +247,57 @@ namespace Jxqy.Domain.Presentation
                 CameraPosition = position;
         }
 
+        public void SetCameraPositionPreservingMove(JxqyFloat2 position)
+        {
+            JxqyFloat2 translation = position - CameraPosition;
+            CameraPosition = position;
+            if (!HasCameraOverride || translation == JxqyFloat2.Zero)
+                return;
+            _cameraStart += translation;
+            _cameraDestination += translation;
+        }
+
         public void ReleaseCamera()
         {
             HasCameraOverride = false;
             _cameraMoveDuration = 0;
             _cameraMoveElapsed = 0;
+        }
+
+        public static JxqyFloat2 ApplyLegacyPlayerFollow(
+            JxqyFloat2 cameraPosition,
+            JxqyFloat2 previousPlayerPosition,
+            JxqyFloat2 playerPosition,
+            int viewportWidth,
+            int viewportHeight)
+        {
+            if (viewportWidth <= 0 || viewportHeight <= 0)
+                throw new ArgumentOutOfRangeException(nameof(viewportWidth));
+            // Original Carmera.UpdatePlayerView deliberately keeps the
+            // current view while the effective player is parked at (0, 0).
+            if (playerPosition == JxqyFloat2.Zero)
+                return cameraPosition;
+            JxqyFloat2 offset = playerPosition - previousPlayerPosition;
+            if (offset == JxqyFloat2.Zero)
+                return cameraPosition;
+
+            var halfView = new JxqyFloat2(
+                viewportWidth * 0.5f,
+                viewportHeight * 0.5f);
+            JxqyFloat2 center = cameraPosition + halfView;
+            float centerX = center.X;
+            float centerY = center.Y;
+            if ((offset.X > 0 && playerPosition.X > centerX) ||
+                (offset.X < 0 && playerPosition.X < centerX))
+            {
+                centerX = playerPosition.X;
+            }
+            if ((offset.Y > 0 && playerPosition.Y > centerY) ||
+                (offset.Y < 0 && playerPosition.Y < centerY))
+            {
+                centerY = playerPosition.Y;
+            }
+            return new JxqyFloat2(centerX, centerY) - halfView;
         }
 
         public void Tick(float elapsedSeconds)

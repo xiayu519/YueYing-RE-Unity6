@@ -254,6 +254,7 @@ namespace Jxqy.Bootstrap
         private JxqyPlayer _player;
         private JxqyObjectManager _objects;
         private JxqyNpcManager _npcs;
+        private bool _npcAiDisabled;
         private JxqyAnimationPlayer _playerStand;
         private JxqyAnimationPlayer _playerWalk;
         private JxqyAnimationPlayer _playerRun;
@@ -285,6 +286,9 @@ namespace Jxqy.Bootstrap
             (JxqyCharacterState)(-1);
         private int _playerVisualStateVersion = -1;
         private JxqyIntRect _camera;
+        private JxqyFloat2 _lastCameraPlayerPosition;
+        private JxqyCharacter _lastCameraPlayerCharacter;
+        private bool _cameraPlayerTracked;
         private string _levelFileName = string.Empty;
         private string _backgroundMusicAddress = string.Empty;
         private string _activeNpcFileName = string.Empty;
@@ -1022,6 +1026,8 @@ namespace Jxqy.Bootstrap
                     height,
                     _mapMetadata.MapPixelWidth,
                     _mapMetadata.MapPixelHeight);
+                _presentationEffects?.SetCameraPositionPreservingMove(
+                    new JxqyFloat2(_camera.X, _camera.Y));
             }
         }
 
@@ -1305,6 +1311,9 @@ namespace Jxqy.Bootstrap
 
         private void CreatePlayer()
         {
+            // Original Npc.IsAIDisabled is reset for a fresh game/runtime,
+            // then remains global while scripted map loads replace NPC data.
+            _npcAiDisabled = false;
             if (_player != null)
             {
                 _player.Died -= OnPlayerDied;
@@ -1567,6 +1576,7 @@ namespace Jxqy.Bootstrap
                     GetActiveMapName = () =>
                         GetMapDisplayName(ActiveMapStableId),
                     GetPlayer = () => _player,
+                    GetPlayerKindCharacter = ResolvePlayerKindCharacter,
                     GetNpcs = () => _npcs,
                     GetObjects = () => _objects,
                     GetInventory = () => _inventory,
@@ -1607,6 +1617,7 @@ namespace Jxqy.Bootstrap
                     ChangePlayerAsync = ChangePlayerAsync,
                     SetInputDisabled =
                         value => _legacyInputDisabled = value,
+                    SetNpcAiDisabled = SetNpcAiDisabled,
                     SetMapPosition = SetMapPosition,
                     SetNamedMapTrap = SetNamedMapTrap,
                     SaveMapTrapSnapshot =
@@ -1799,6 +1810,7 @@ namespace Jxqy.Bootstrap
                 cancellationToken);
             _playerSpecialAction = null;
             _playerIndex = 0;
+            _uiSession?.SetPlayerIndex(0, notify: false);
             _playerProfiles.Clear();
             _levelFileName = string.Empty;
             _backgroundMusicAddress = string.Empty;
@@ -3134,10 +3146,28 @@ namespace Jxqy.Bootstrap
                 }
                 return;
             }
-            string text = await LoadDynamicTextAsync(
-                "ini/save",
-                safeFileName,
-                this.GetCancellationTokenOnDestroy());
+            string text;
+            try
+            {
+                text = await LoadDynamicTextAsync(
+                    "ini/save",
+                    safeFileName,
+                    this.GetCancellationTokenOnDestroy());
+            }
+            catch (Exception exception) when (
+                !(exception is OperationCanceledException))
+            {
+                // Original ObjManager.Load clears the current objects,
+                // catches file/read failures and lets the script
+                // continue. Several shipped late-game scripts intentionally
+                // reference absent .obj files such as yaowanggu.obj.
+                Debug.LogWarning(
+                    $"JXQY-OBJ snapshot '{safeFileName}' is unavailable. " +
+                    "Original behavior leaves objects empty and continues " +
+                    $"the script. {exception.Message}",
+                    this);
+                return;
+            }
             Dictionary<string, Dictionary<string, string>> sections =
                 JxqyLegacySaveImporter.ParseIni(text);
             int objectIndex = 0;
@@ -4257,10 +4287,12 @@ namespace Jxqy.Bootstrap
                     attackFileName,
                     cancellationToken);
                 JxqyMagicDefinition attackMagic =
+                    // Original Magic loads AttackFile with noLevel=true:
+                    // Init values stay unlevelled (Current/EffectLevel 0).
                     ParseMagicDefinitionAtLevel(
                         attackFileName,
                         attackText,
-                        1);
+                        0);
                 await LoadMagicVisualAssetsAsync(
                     attackMagic,
                     cancellationToken);
@@ -4752,35 +4784,27 @@ namespace Jxqy.Bootstrap
                 out JxqyRuntimeMagicAssets assets);
             if (magic.MoveKind == 15 && assets?.SuperMode != null)
             {
-                magic.LifeSeconds = GetAnimationDurationSeconds(
+                magic.LifeSeconds = GetFullAnimationActiveSeconds(
                     assets.SuperMode);
                 return;
             }
             if (magic.LifeFrame > 0)
             {
-                // Legacy MagicSprite still advances an empty ASF at 60 Hz.
-                // Several melee FlyIni files intentionally have no
-                // FlyingImage, so leaving the generic three-second lifetime
-                // creates delayed invisible hits unrelated to the attack
-                // animation that emitted them.
-                float frameSeconds = assets?.Flying == null
-                    ? 1f / 60f
-                    : Math.Max(
-                          1,
-                          assets.Flying.IntervalMilliseconds) /
-                      1000f;
                 magic.LifeSeconds = magic.MoveKind == 13
                     ? magic.LifeFrame * 0.01f
-                    : magic.LifeFrame * frameSeconds;
+                    : JxqyLegacyMagicTiming
+                        .GetPositiveLifeFrameActiveSeconds(
+                            magic.LifeFrame,
+                            assets?.Flying?.IntervalMilliseconds ?? 0);
                 return;
             }
             if (assets?.Flying == null)
                 return;
-            magic.LifeSeconds = GetAnimationDurationSeconds(
+            magic.LifeSeconds = GetFullAnimationActiveSeconds(
                 assets.Flying);
         }
 
-        private static float GetAnimationDurationSeconds(
+        private static float GetFullAnimationActiveSeconds(
             JxqyAnimationMetadata metadata)
         {
             JxqyAnimationDirectionMetadata firstDirection =
@@ -4789,15 +4813,13 @@ namespace Jxqy.Bootstrap
                     .FirstOrDefault();
             if (firstDirection == null)
                 return 0.01f;
-            int endFrame = firstDirection.FirstFrameIndex +
-                           firstDirection.FrameCount;
-            int durationMilliseconds = metadata.Frames
-                .Where(frame =>
-                    frame.SourceFrameIndex >=
-                    firstDirection.FirstFrameIndex &&
-                    frame.SourceFrameIndex < endFrame)
-                .Sum(frame => Math.Max(1, frame.DurationMilliseconds));
-            return Math.Max(0.01f, durationMilliseconds / 1000f);
+            // Original MagicSprite treats LifeFrame=0 (and MoveKind=15) as
+            // "play one complete direction". Sprite.Update runs at 60 Hz,
+            // advances at most one ASF frame per tick even when Interval=0,
+            // and MagicSprite gets one final collision tick after playback.
+            return JxqyLegacyMagicTiming.GetPositiveLifeFrameActiveSeconds(
+                firstDirection.FrameCount,
+                metadata.IntervalMilliseconds);
         }
 
         private async UniTask OpenShopAsync(
@@ -4945,10 +4967,16 @@ namespace Jxqy.Bootstrap
             JxqyAssetLease<TextAsset> lease = await LoadTextAsync(
                 address,
                 cancellationToken);
+            // The original Loader.ChangePlayer creates a new Player instance,
+            // so action-file overrides applied to the previous protagonist do
+            // not survive the switch. This runtime reuses one player object;
+            // clear those per-character overrides before loading the new body.
+            _playerScriptActions.Clear();
             await SetCharacterResourceAsync(
                 _player,
                 GetPlayerResourceFileName(lease.Asset.text));
             _playerIndex = index;
+            _uiSession?.SetPlayerIndex(index);
             _pendingPlayerMagicCast = null;
             _pendingBasicAttacks.Remove(_player);
             _transientCombatStates.Remove(_player);
@@ -5209,6 +5237,7 @@ namespace Jxqy.Bootstrap
                 IsLooping = false,
             };
             action.Restart();
+            character.BeginSpecialAction();
             if (ReferenceEquals(character, _player))
             {
                 _playerSpecialAction = action;
@@ -5444,7 +5473,7 @@ namespace Jxqy.Bootstrap
             if (_playerAutoAttack != null)
                 _playerAutoAttack.Target = null;
             if (_uiSession != null)
-                _uiSession.CombatTarget = null;
+                _uiSession.HoveredNpc = null;
             if (_player != null)
                 _player.SetFighting(false);
             if (_npcs == null)
@@ -5599,6 +5628,9 @@ namespace Jxqy.Bootstrap
                     ApplyActorPosition(npc, state);
                     continue;
                 }
+                bool specialActionCompleted = state.SpecialAction != null;
+                if (specialActionCompleted)
+                    npc.EndSpecialAction();
                 state.SpecialAction = null;
                 if (state.SpecialActionOnly)
                 {
@@ -5614,7 +5646,13 @@ namespace Jxqy.Bootstrap
                         state.Actions,
                         npc.State,
                         state.Stand);
-                if (!ReferenceEquals(state.Current, desired) ||
+                // Original Character.EndSpecialAction force-refreshes the
+                // current state texture. The cached normal-state metadata is
+                // still the same here, but Visual.Animation still references
+                // the completed one-shot action, so completion itself must
+                // force the normal animation to be rebound.
+                if (specialActionCompleted ||
+                    !ReferenceEquals(state.Current, desired) ||
                     state.CurrentState != npc.State ||
                     state.CurrentStateVersion != npc.StateVersion)
                 {
@@ -5636,7 +5674,10 @@ namespace Jxqy.Bootstrap
                 }
                 state.Visual.Animation.SetDirection(
                     statusDeath ? 0 : npc.CurrentDirection);
-                state.Visual.Animation.Advance(elapsedSeconds);
+                state.Visual.Animation.Advance(
+                    statusDeath
+                        ? elapsedSeconds
+                        : elapsedSeconds * npc.CharacterTimeScale);
                 ApplyActorPosition(npc, state);
                 if (!string.IsNullOrWhiteSpace(
                         state.ActiveStateSoundId) &&
@@ -5743,7 +5784,6 @@ namespace Jxqy.Bootstrap
             _playerAutoAttack.Target = target;
             _playerAutoAttackRunRequested = runRequested;
             _player.SetFighting(true);
-            _uiSession.CombatTarget = target;
             if (IsWithinAutoAttackRange(
                     _playerAutoAttack,
                     _player,
@@ -6004,6 +6044,8 @@ namespace Jxqy.Bootstrap
                         : JxqyWorldVisualKind.Projectile,
                     Animation = animation,
                     MaterialKey = "default",
+                    IsVisible = projectile == null ||
+                                projectile.DelaySeconds <= 0f,
                 },
             };
             SetMagicVisualPosition(state.Visual, origin);
@@ -6051,7 +6093,11 @@ namespace Jxqy.Bootstrap
             string magicId = null;
             if (ReferenceEquals(projectile.Source, _player))
             {
-                magicId = projectile.Magic.Id;
+                magicId =
+                    JxqyExperienceRules.ResolvePlayerMagicExperienceId(
+                        projectile.Magic.Id,
+                        _skills?.Find(projectile.Magic.Id) != null,
+                        _uiSession?.SelectedSkill?.Magic?.Id);
             }
             else if (JxqyExperienceRules.IsPlayerMagicExperienceSource(
                          projectile.Source,
@@ -6275,6 +6321,11 @@ namespace Jxqy.Bootstrap
                 JxqyRuntimeMagicVisual state = _magicVisuals[index];
                 if (state.Projectile != null)
                 {
+                    bool delayElapsed =
+                        state.Projectile.DelaySeconds <= 0f;
+                    state.Visual.IsVisible = delayElapsed;
+                    if (!delayElapsed)
+                        continue;
                     SetMagicVisualPosition(
                         state.Visual,
                         state.Projectile.Position);
@@ -6597,6 +6648,8 @@ namespace Jxqy.Bootstrap
                     }
                     continue;
                 }
+                if (_npcs.IsAiDisabled)
+                    continue;
                 if (npc.KeepAttackX > 0 || npc.KeepAttackY > 0)
                 {
                     _npcKeepAttackCooldowns.TryGetValue(
@@ -6646,11 +6699,34 @@ namespace Jxqy.Bootstrap
                     BeginBasicAttack);
             }
             UpdateCombatEngagementState();
-            UpdateCombatTargetForHud();
             TickTransientCombatStates(elapsedSeconds);
             foreach (JxqyNpc npc in _npcDeathsReadyToFinalize)
                 FinalizeNpcDeathAsync(npc).Forget();
             _npcDeathsReadyToFinalize.Clear();
+        }
+
+        private void SetNpcAiDisabled(bool disabled)
+        {
+            // Preserve the original process-wide AI switch independently of
+            // the current map's manager. Some scripts disable AI before
+            // LoadMap and only re-enable it after their blocking dialogue.
+            _npcAiDisabled = disabled;
+            if (_npcs == null)
+                return;
+            if (!disabled)
+            {
+                _npcs.EnableAi();
+                return;
+            }
+
+            _npcs.DisableAi();
+            _npcAutoAttacks.Clear();
+            foreach (JxqyCharacter attacker in
+                     _pendingBasicAttacks.Keys.ToArray())
+            {
+                if (attacker is JxqyNpc)
+                    _pendingBasicAttacks.Remove(attacker);
+            }
         }
 
         private void PopulateCombatCollisionTargets(
@@ -6739,27 +6815,6 @@ namespace Jxqy.Bootstrap
                 npc.Intent == JxqyNpcIntent.Attack &&
                 ReferenceEquals(npc.FollowTarget, _player)) == true;
             _player.SetFighting(hasLiveTarget || isBeingAttacked);
-        }
-
-        private void UpdateCombatTargetForHud()
-        {
-            if (_uiSession == null)
-                return;
-            JxqyNpc target = _playerAutoAttack?.Target as JxqyNpc;
-            if (target == null || target.IsDead || !target.IsVisible)
-            {
-                target = _npcs?.Npcs
-                    .Where(npc =>
-                        !npc.IsDead &&
-                        npc.IsVisible &&
-                        npc.Intent == JxqyNpcIntent.Attack &&
-                        ReferenceEquals(npc.FollowTarget, _player))
-                    .OrderBy(npc => JxqyFloat2.Distance(
-                        npc.PositionInWorld,
-                        _player.PositionInWorld))
-                    .FirstOrDefault();
-            }
-            _uiSession.CombatTarget = target;
         }
 
         private bool ResolveBasicAttack(
@@ -7262,7 +7317,8 @@ namespace Jxqy.Bootstrap
                     continue;
                 }
                 float remaining =
-                    _transientCombatStates[character] - elapsedSeconds;
+                    _transientCombatStates[character] -
+                    elapsedSeconds * character.CharacterTimeScale;
                 if (remaining > 0)
                 {
                     _transientCombatStates[character] = remaining;
@@ -7599,6 +7655,8 @@ namespace Jxqy.Bootstrap
                 LogicalHeight,
                 _mapMetadata.MapPixelWidth,
                 _mapMetadata.MapPixelHeight);
+            _presentationEffects?.SetCameraPositionPreservingMove(
+                new JxqyFloat2(_camera.X, _camera.Y));
         }
 
         private void FreeMapFromScript()
@@ -8131,6 +8189,7 @@ namespace Jxqy.Bootstrap
                 _player,
                 GetPlayerResourceFileName(lease.Asset.text));
             _playerIndex = safeIndex;
+            _uiSession?.SetPlayerIndex(safeIndex, notify: false);
         }
 
         private async UniTask PrepareRestoredMagicVisualsAsync(
@@ -8450,6 +8509,7 @@ namespace Jxqy.Bootstrap
             CancellationToken cancellationToken)
         {
             _playerIndex = save.Player.PlayerIndex;
+            _uiSession?.SetPlayerIndex(_playerIndex, notify: false);
             _playerProfiles.Clear();
             foreach (JxqySavePlayerProfileState profile in
                      save.Player.Profiles ??
@@ -8633,7 +8693,8 @@ namespace Jxqy.Bootstrap
                 _objects,
                 new JxqyRuntimeCollisionMap(_map),
                 _legacyRandom);
-            _npcs.IsAiDisabled = save.World.NpcAiDisabled;
+            _npcAiDisabled = save.World.NpcAiDisabled;
+            _npcs.IsAiDisabled = _npcAiDisabled;
             _activeNpcFileName = save.World.NpcFile ?? string.Empty;
             _activeObjectFileName =
                 save.World.ObjectFile ?? string.Empty;
@@ -9179,6 +9240,7 @@ namespace Jxqy.Bootstrap
                     _objects,
                     new JxqyRuntimeCollisionMap(_map),
                     _legacyRandom);
+                _npcs.IsAiDisabled = _npcAiDisabled;
                 foreach (JxqyNpc follower in followers)
                     _npcs.Add(follower);
                 _lastTrapObservedTile = new JxqyIntPoint(-1, -1);
@@ -9229,6 +9291,12 @@ namespace Jxqy.Bootstrap
         {
             _presentationEffects?.ReleaseCamera();
             CenterCameraOnPlayerCore();
+            JxqyCharacter player = ResolvePlayerKindCharacter();
+            _lastCameraPlayerPosition = player.PositionInWorld;
+            _lastCameraPlayerCharacter = player;
+            _cameraPlayerTracked = true;
+            _presentationEffects?.SetCameraAnchor(
+                new JxqyFloat2(_camera.X, _camera.Y));
         }
 
         private void HandleScriptedPlayerPositionSet()
@@ -9242,6 +9310,9 @@ namespace Jxqy.Bootstrap
         {
             if (_npcs == null || _player == null)
                 return;
+            JxqyCharacter leader = ResolvePlayerKindCharacter();
+            if (leader == null)
+                return;
             JxqyNpc[] partners = _npcs.Npcs
                 .Where(npc =>
                     npc.Kind == JxqyCharacterKind.Follower)
@@ -9249,11 +9320,11 @@ namespace Jxqy.Bootstrap
             if (partners.Length == 0)
                 return;
             IReadOnlyList<JxqyIntPoint> neighbors =
-                JxqyPathfinder.GetAllNeighbors(_player.TilePosition);
-            int index = _player.CurrentDirection + 4;
+                JxqyPathfinder.GetAllNeighbors(leader.TilePosition);
+            int index = leader.CurrentDirection + 4;
             foreach (JxqyNpc partner in partners)
             {
-                if (index == _player.CurrentDirection)
+                if (index == leader.CurrentDirection)
                     index++;
                 partner.Stop();
                 partner.TilePosition = neighbors[index % 8];
@@ -9287,7 +9358,8 @@ namespace Jxqy.Bootstrap
 
         private void CenterCameraOnPlayerCore()
         {
-            JxqyFloat2 position = _player.PositionInWorld;
+            JxqyFloat2 position =
+                ResolvePlayerKindCharacter().PositionInWorld;
             _camera = JxqyIsometricMapMath.ClampCamera(
                 Mathf.RoundToInt(position.X) - LogicalWidth / 2,
                 Mathf.RoundToInt(position.Y) - LogicalHeight / 2,
@@ -9295,6 +9367,55 @@ namespace Jxqy.Bootstrap
                 LogicalHeight,
                 _mapMetadata.MapPixelWidth,
                 _mapMetadata.MapPixelHeight);
+        }
+
+        private void UpdateCameraFromOriginalPlayerFollow()
+        {
+            JxqyCharacter player = ResolvePlayerKindCharacter();
+            JxqyFloat2 position = player.PositionInWorld;
+            if (!_cameraPlayerTracked)
+            {
+                _lastCameraPlayerPosition = position;
+                _lastCameraPlayerCharacter = player;
+                _cameraPlayerTracked = true;
+                _presentationEffects.SetCameraPositionPreservingMove(
+                    new JxqyFloat2(_camera.X, _camera.Y));
+                return;
+            }
+            if (player.Kind != JxqyCharacterKind.Player)
+            {
+                _lastCameraPlayerPosition = position;
+                _lastCameraPlayerCharacter = player;
+                return;
+            }
+            if (!ReferenceEquals(_lastCameraPlayerCharacter, player))
+                _lastCameraPlayerPosition = position;
+            JxqyFloat2 followed =
+                JxqyPresentationEffects.ApplyLegacyPlayerFollow(
+                    new JxqyFloat2(_camera.X, _camera.Y),
+                    _lastCameraPlayerPosition,
+                    position,
+                    LogicalWidth,
+                    LogicalHeight);
+            _camera = JxqyIsometricMapMath.ClampCamera(
+                Mathf.RoundToInt(followed.X),
+                Mathf.RoundToInt(followed.Y),
+                LogicalWidth,
+                LogicalHeight,
+                _mapMetadata.MapPixelWidth,
+                _mapMetadata.MapPixelHeight);
+            _presentationEffects.SetCameraPositionPreservingMove(
+                new JxqyFloat2(_camera.X, _camera.Y));
+            // Match the original early return: a temporary player at world
+            // zero must not replace the last real follow position.
+            if (position != JxqyFloat2.Zero)
+                _lastCameraPlayerPosition = position;
+            _lastCameraPlayerCharacter = player;
+        }
+
+        private JxqyCharacter ResolvePlayerKindCharacter()
+        {
+            return _npcs?.ResolvePlayerKindCharacter() ?? _player;
         }
 
         private JxqyFloat2 ResolveTileCameraPosition(
@@ -9327,6 +9448,8 @@ namespace Jxqy.Bootstrap
                 LogicalHeight,
                 _mapMetadata.MapPixelWidth,
                 _mapMetadata.MapPixelHeight);
+            _presentationEffects.SetCameraPositionPreservingMove(
+                new JxqyFloat2(_camera.X, _camera.Y));
         }
 
         private void Update()
@@ -9355,7 +9478,11 @@ namespace Jxqy.Bootstrap
                 return;
             }
             ProcessUiInput(input, intents);
-            TickTimeLimit(elapsed);
+            bool gameplayPaused =
+                _gameStarted &&
+                _uiSession?.RequestsGameplayPause == true;
+            if (!gameplayPaused)
+                TickTimeLimit(elapsed);
             using (ScriptTickMarker.Auto())
                 _scriptSession?.Tick(elapsed * 1000.0);
             if (_video is JxqyUnityVideoPort activeVideo &&
@@ -9386,7 +9513,29 @@ namespace Jxqy.Bootstrap
                 ReturnToTitle();
             }
             RecoverOrphanedOpaqueFade();
-            bool scriptedMovement = _gameStarted && _player.HasPath;
+            if (gameplayPaused)
+            {
+                UpdateScreenFadeUi();
+                ApplyPresentationColors();
+                SubmitFrame();
+                return;
+            }
+            bool specialActionActive =
+                _player.IsSpecialActionActive &&
+                _playerSpecialAction != null &&
+                !_playerSpecialAction.IsFinished;
+            if (_player.IsSpecialActionActive && !specialActionActive)
+                _player.EndSpecialAction();
+            // Original JumpTo never enters a jump state unless the active
+            // character resource actually supplies a jump action. Temporary
+            // playable characters such as Nalan Zhen do not; recovering here
+            // also releases a bad jump state created before this correction.
+            if (_player.IsJumping && !HasPlayerJumpAction())
+                _player.Stop();
+            bool scriptedMovement =
+                _gameStarted &&
+                _player.HasPath &&
+                !specialActionActive;
             if (scriptedMovement && !IsPlayerJumpTakeoffFrame())
                 _player.TickMovement(elapsed, IsPlayerPathTileBlocked);
             bool manualMovement =
@@ -9397,6 +9546,7 @@ namespace Jxqy.Bootstrap
                  JxqyInputButtons.LegacyKeyboardMovement) == 0 &&
                 !_uiSession.IsModal &&
                 !(_scriptSession?.IsRunning ?? false) &&
+                !specialActionActive &&
                 !_player.HasPath &&
                 (!Mathf.Approximately(input.MoveX, 0f) ||
                  !Mathf.Approximately(input.MoveY, 0f));
@@ -9503,7 +9653,10 @@ namespace Jxqy.Bootstrap
             _playerVisualStateVersion = _player.StateVersion;
             animation.SetDirection(
                 playerStatusDeath ? 0 : _player.CurrentDirection);
-            animation.Advance(elapsed);
+            animation.Advance(
+                playerStatusDeath || specialActionActive
+                    ? elapsed
+                    : elapsed * _player.CharacterTimeScale);
             if (!string.IsNullOrWhiteSpace(
                     _playerActiveStateSoundId) &&
                 _audio is IJxqyWorldAudioPort playerWorldAudio)
@@ -9549,6 +9702,8 @@ namespace Jxqy.Bootstrap
                 TickWorldObjects(elapsed);
                 using (NpcTickMarker.Auto())
                     _npcs?.Tick(elapsed);
+                if (_npcs?.FollowerResetRequested == true)
+                    ResetPartnerPositions();
                 using (CombatTickMarker.Auto())
                     TickCombat(elapsed);
                 TryStartPendingInteraction();
@@ -9569,15 +9724,8 @@ namespace Jxqy.Bootstrap
             UpdatePlayerVisual();
             ApplyPresentationColors();
             if (_presentationEffects.HasCameraOverride)
-            {
                 ApplyPresentationCamera();
-            }
-            else
-            {
-                CenterCameraOnPlayerCore();
-                _presentationEffects.SetCameraAnchor(
-                    new JxqyFloat2(_camera.X, _camera.Y));
-            }
+            UpdateCameraFromOriginalPlayerFollow();
             UpdatePointerHighlight(
                 new JxqyFloat2(input.PointerX, input.PointerY));
             TryTriggerPlayerTrap();
@@ -9784,6 +9932,12 @@ namespace Jxqy.Bootstrap
                             !_uiSession.IsModal &&
                             !(_scriptSession?.IsRunning ?? false))
                         {
+                            if (_player.ManaLimit)
+                            {
+                                _uiSession.SetNotice(
+                                    "内力尽失中无法打坐");
+                                break;
+                            }
                             ClearPendingInteraction();
                             _pendingPlayerMagicCast = null;
                             _player.ToggleMeditation();
@@ -10090,7 +10244,7 @@ namespace Jxqy.Bootstrap
                     out interactionScript);
             }
             if (interactionOwner is JxqyNpc attackTarget &&
-                attackTarget.Relation == JxqyRelationType.Enemy)
+                IsLegacyPointerAttackTarget(attackTarget))
             {
                 SelectPlayerAttackTarget(
                     attackTarget,
@@ -10103,6 +10257,7 @@ namespace Jxqy.Bootstrap
             if (_playerAutoAttack != null)
                 _playerAutoAttack.Target = null;
             if (interactionOwner != null &&
+                !string.IsNullOrWhiteSpace(interactionScript) &&
                 IsInInteractionRange(interactionOwner))
             {
                 StartInteraction(interactionOwner, interactionScript);
@@ -10110,6 +10265,8 @@ namespace Jxqy.Bootstrap
             }
             if (jumpRequested && interactionOwner == null)
             {
+                if (!HasPlayerJumpAction())
+                    return;
                 JxqyIntPoint jumpWorld =
                     JxqyIsometricMapMath.TileToWorldPixel(
                         requestedDestination.X,
@@ -10172,6 +10329,19 @@ namespace Jxqy.Bootstrap
             }
             if (!accepted || !resolvedDestination.Equals(requestedDestination))
                 MoveStandingPartnersTo(requestedDestination);
+        }
+
+        private bool HasPlayerJumpAction()
+        {
+            return HasPlayerAction(JxqyCharacterState.Jump) ||
+                   HasPlayerAction(JxqyCharacterState.FightJump);
+        }
+
+        private bool HasPlayerAction(JxqyCharacterState state)
+        {
+            return _player.IsActionEnabled(state) &&
+                   (_playerScriptActions.ContainsKey((int)state) ||
+                    _playerStateActions.ContainsKey((int)state));
         }
 
         private void HandleInteract(JxqyFloat2 pointer)
@@ -10381,6 +10551,8 @@ namespace Jxqy.Bootstrap
 
         private void UpdatePointerHighlight(JxqyFloat2 pointer)
         {
+            if (_uiSession != null)
+                _uiSession.HoveredNpc = null;
             foreach (JxqyRuntimeActorVisual state in _npcVisuals.Values)
                 state.Visual.OutlineColor = Color.clear;
             foreach (JxqyRuntimeActorVisual state in _objectVisuals.Values)
@@ -10416,6 +10588,8 @@ namespace Jxqy.Bootstrap
                         new Color(0f, 0f, 0.6f, 0.6f),
                     _ => new Color(0.6f, 0.6f, 0f, 0.6f),
                 };
+                if (_uiSession != null && IsLegacyTargetLifeNpc(npc))
+                    _uiSession.HoveredNpc = npc;
             }
             else if (owner is JxqyWorldObject worldObject &&
                      _objectVisuals.TryGetValue(
@@ -10443,8 +10617,7 @@ namespace Jxqy.Bootstrap
                 JxqyNpc npc = pair.Key;
                 if (!npc.IsVisible ||
                     npc.Life <= 0 ||
-                    string.IsNullOrWhiteSpace(npc.ScriptAddress) &&
-                    npc.Relation != JxqyRelationType.Enemy ||
+                    !IsLegacyPointerInteractiveNpc(npc) ||
                     !HitTestVisual(pair.Value.Visual, worldX, worldY))
                 {
                     continue;
@@ -10475,6 +10648,33 @@ namespace Jxqy.Bootstrap
                 return true;
             }
             return false;
+        }
+
+        private static bool IsLegacyPointerInteractiveNpc(JxqyNpc npc)
+        {
+            return npc != null &&
+                   (!string.IsNullOrWhiteSpace(npc.ScriptAddress) ||
+                    IsLegacyTargetLifeNpc(npc));
+        }
+
+        private static bool IsLegacyTargetLifeNpc(JxqyNpc npc)
+        {
+            if (npc == null)
+                return false;
+            return (npc.Kind == JxqyCharacterKind.Fighter &&
+                    (npc.Relation == JxqyRelationType.Enemy ||
+                     npc.Relation == JxqyRelationType.None)) ||
+                   ((npc.Kind == JxqyCharacterKind.Fighter ||
+                     npc.Kind == JxqyCharacterKind.Follower) &&
+                    npc.Relation == JxqyRelationType.Friend);
+        }
+
+        private static bool IsLegacyPointerAttackTarget(JxqyNpc npc)
+        {
+            return npc != null &&
+                   npc.Kind == JxqyCharacterKind.Fighter &&
+                   (npc.Relation == JxqyRelationType.Enemy ||
+                    npc.Relation == JxqyRelationType.None);
         }
 
         private bool TryFindPointerMagicTarget(

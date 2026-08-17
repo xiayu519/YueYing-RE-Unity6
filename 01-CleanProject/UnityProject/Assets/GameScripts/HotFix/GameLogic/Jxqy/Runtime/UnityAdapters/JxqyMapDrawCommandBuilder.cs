@@ -72,6 +72,14 @@ namespace Jxqy.UnityAdapters
         {
             if (result == null)
                 throw new ArgumentNullException(nameof(result));
+            // Original Jxqy treats exact black as a sentinel that switches
+            // map layers to its grayscale effect. It is not a black vertex
+            // tint; actors continue to use the independently configured ASF
+            // color. Keep this rule shared by every scripted map transition.
+            bool usesLegacyGrayscale = IsLegacyGrayscale(drawColor);
+            Color mapDrawColor = usesLegacyGrayscale
+                ? Color.white
+                : drawColor;
             JxqyTileRange visible =
                 JxqyIsometricMapMath.CalculateVisibleTileRange(
                     camera,
@@ -165,14 +173,25 @@ namespace Jxqy.UnityAdapters
                             new Vector2(
                                 frame.GetMapAnchorX(),
                                 frame.GetMapAnchorY()),
-                            drawColor,
+                            mapDrawColor,
                             depth,
                             writesPlayerOcclusion
-                                ? "occluder"
-                                : "default"));
+                                ? usesLegacyGrayscale
+                                    ? "occluder-grayscale"
+                                    : "occluder"
+                                : usesLegacyGrayscale
+                                    ? "grayscale"
+                                    : "default"));
                     }
                 }
             }
+        }
+
+        private static bool IsLegacyGrayscale(Color drawColor)
+        {
+            return drawColor.r == 0f &&
+                   drawColor.g == 0f &&
+                   drawColor.b == 0f;
         }
 
         public static string CreateMpcStableId(

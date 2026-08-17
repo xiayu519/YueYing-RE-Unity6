@@ -269,7 +269,7 @@ namespace Jxqy.Domain.Simulation
             }
         }
 
-        public int Mana
+        public virtual int Mana
         {
             get => _mana;
             set => _mana = Math.Max(0, Math.Min(value, ManaMax));
@@ -308,9 +308,20 @@ namespace Jxqy.Domain.Simulation
                 int percent = Math.Max(
                     MinimumMoveSpeedPercent,
                     ChangeMoveSpeedPercent + AddMoveSpeedPercent);
-                return 1f + percent / 100f;
+                return (1f + percent / 100f) * CharacterTimeScale;
             }
         }
+
+        // Original Character.Update returns before normal state animation
+        // while petrified, but keeps frozen actors controllable and advances
+        // their local movement/action clock at half speed. DisableMove only
+        // blocks displacement and does not pause this clock.
+        public float CharacterTimeScale =>
+            HasStatus(JxqyStatusKind.Petrified)
+                ? 0f
+                : HasStatus(JxqyStatusKind.Frozen)
+                    ? 0.5f
+                    : 1f;
 
         public bool IsStanding =>
             State == JxqyCharacterState.Stand ||
@@ -358,6 +369,18 @@ namespace Jxqy.Domain.Simulation
         {
             State = JxqyCharacterState.Magic;
             IsCurrentMagicUninterruptible = cannotBeInterrupted;
+        }
+
+        public bool IsSpecialActionActive { get; private set; }
+
+        public void BeginSpecialAction()
+        {
+            IsSpecialActionActive = true;
+        }
+
+        public void EndSpecialAction()
+        {
+            IsSpecialActionActive = false;
         }
 
         public void SetFighting(bool fighting)
@@ -660,6 +683,7 @@ namespace Jxqy.Domain.Simulation
         private float _runThewAccumulator;
         private float _thewRestoreAccumulator;
         private float _meditationAccumulator;
+        private bool _manaLimit;
 
         public JxqyPlayer()
         {
@@ -675,7 +699,26 @@ namespace Jxqy.Domain.Simulation
         public bool WalkIsRun { get; set; }
         public bool IsNotUseThewWhenRun { get; set; }
         public bool IsManaRestore { get; set; }
-        public bool ManaLimit { get; set; }
+        public override int Mana
+        {
+            get => base.Mana;
+            set => base.Mana = ManaLimit ? 0 : value;
+        }
+
+        public bool ManaLimit
+        {
+            get => _manaLimit;
+            set
+            {
+                _manaLimit = value;
+                if (!value)
+                    return;
+                base.Mana = 0;
+                _meditationAccumulator = 0f;
+                if (State == JxqyCharacterState.Sit)
+                    Stop();
+            }
+        }
         public int AddLifeRestorePercent { get; set; }
         public int AddThewRestorePercent { get; set; }
         public int AddManaRestorePercent { get; set; }
@@ -749,11 +792,14 @@ namespace Jxqy.Domain.Simulation
                             ThewMax *
                             (ThewRestorePercent +
                              AddThewRestorePercent / 1000f));
-                        Mana += (int)(
-                            ManaMax *
-                            (AddManaRestorePercent / 1000f));
-                        if (IsManaRestore)
-                            Mana += (int)(ManaMax * 0.02f);
+                        if (!ManaLimit)
+                        {
+                            Mana += (int)(
+                                ManaMax *
+                                (AddManaRestorePercent / 1000f));
+                            if (IsManaRestore)
+                                Mana += (int)(ManaMax * 0.02f);
+                        }
                     }
                 }
                 else
@@ -791,6 +837,8 @@ namespace Jxqy.Domain.Simulation
                 Stop();
                 return false;
             }
+            if (ManaLimit)
+                return false;
             if (!CanPerformAction)
                 return false;
             Stop();
@@ -812,6 +860,12 @@ namespace Jxqy.Domain.Simulation
             {
                 _meditationAccumulator = 0f;
                 return false;
+            }
+            if (ManaLimit)
+            {
+                _meditationAccumulator = 0f;
+                Stop();
+                return true;
             }
 
             int amount = Math.Max(1, ManaMax / 100);

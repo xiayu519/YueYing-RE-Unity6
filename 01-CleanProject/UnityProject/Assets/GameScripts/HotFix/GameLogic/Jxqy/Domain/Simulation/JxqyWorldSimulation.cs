@@ -1227,8 +1227,15 @@ namespace Jxqy.Domain.Simulation
 
         public bool IsAiDisabled { get; set; }
         public IReadOnlyList<JxqyNpc> Npcs => _npcs;
+        public JxqyNpc PlayerKindCharacter => _npcs.FirstOrDefault(
+            npc => npc.Kind == JxqyCharacterKind.Player);
+        public JxqyCharacter ResolvePlayerKindCharacter()
+        {
+            return (JxqyCharacter)PlayerKindCharacter ?? _player;
+        }
         public int PathPlansLastTick { get; private set; }
         public long PathPlansTotal { get; private set; }
+        public bool FollowerResetRequested { get; private set; }
 
         public void Add(JxqyNpc npc)
         {
@@ -1358,7 +1365,7 @@ namespace Jxqy.Domain.Simulation
             if (finder == null)
                 throw new ArgumentNullException(nameof(finder));
             JxqyCharacter closest = null;
-            int closestDistance = int.MaxValue;
+            float closestDistance = float.MaxValue;
             if (!finder.NoAutoAttackPlayer &&
                 JxqyRelations.AreOpposed(finder, _player) &&
                 JxqyPathfinder.CanViewTarget(
@@ -1368,9 +1375,9 @@ namespace Jxqy.Domain.Simulation
                     finder.VisionRadius))
             {
                 closest = _player;
-                closestDistance = JxqyPathfinder.GetViewTileDistance(
-                    finder.TilePosition,
-                    _player.TilePosition);
+                closestDistance = JxqyFloat2.Distance(
+                    finder.PositionInWorld,
+                    _player.PositionInWorld);
             }
             foreach (JxqyNpc candidate in _npcs)
             {
@@ -1386,20 +1393,39 @@ namespace Jxqy.Domain.Simulation
                         candidate.TilePosition,
                         finder.VisionRadius))
                     continue;
-                int distance = JxqyPathfinder.GetViewTileDistance(
-                    finder.TilePosition,
-                    candidate.TilePosition);
+                float distance = JxqyFloat2.Distance(
+                    finder.PositionInWorld,
+                    candidate.PositionInWorld);
                 if (distance >= closestDistance)
                     continue;
                 closest = candidate;
                 closestDistance = distance;
             }
-            return closestDistance <= finder.VisionRadius ? closest : null;
+            return closest;
+        }
+
+        public void DisableAi()
+        {
+            IsAiDisabled = true;
+            foreach (JxqyNpc npc in _npcs)
+            {
+                if (npc.Kind != JxqyCharacterKind.Fighter)
+                    continue;
+                npc.FollowTarget = null;
+                npc.Intent = JxqyNpcIntent.Idle;
+            }
+        }
+
+        public void EnableAi()
+        {
+            IsAiDisabled = false;
         }
 
         public void Tick(float elapsedSeconds)
         {
             PathPlansLastTick = 0;
+            FollowerResetRequested = false;
+            UpdatePlayerFollower();
             foreach (JxqyNpc npc in _npcs)
             {
                 if (npc.Life > 0)
@@ -1410,12 +1436,51 @@ namespace Jxqy.Domain.Simulation
                     npc.AiRepathCooldownSeconds = Math.Max(
                         0f,
                         npc.AiRepathCooldownSeconds - elapsedSeconds);
+                    // Original Character.Update advances an active scripted
+                    // special action and returns before AI/path movement.
+                    // Keep an already queued route, but do not slide the
+                    // actor underneath its one-shot pose.
+                    if (npc.IsSpecialActionActive)
+                        continue;
                     UpdateAi(npc);
                 }
                 npc.TickMovement(elapsedSeconds, IsNpcMovementBlocked);
                 if (npc.Life > 0)
                     RefreshApproachAfterWaypoint(npc);
             }
+        }
+
+        private void UpdatePlayerFollower()
+        {
+            if (_player.Kind != JxqyCharacterKind.Follower)
+                return;
+
+            JxqyNpc leader = PlayerKindCharacter;
+            if (leader == null || leader.Life <= 0)
+                return;
+
+            int distance = JxqyPathfinder.GetViewTileDistance(
+                _player.TilePosition,
+                leader.TilePosition);
+            if (distance <= 2)
+                return;
+
+            bool run = distance > 5 || _player.IsRunning;
+            if (_player.HasPath && (!run || _player.IsRunning))
+                return;
+
+            PathPlansLastTick++;
+            PathPlansTotal++;
+            IReadOnlyList<JxqyFloat2> path = JxqyPathfinder.FindPath(
+                _map,
+                _player.TilePosition,
+                leader.TilePosition,
+                tile => _objects.IsObstacle(tile) ||
+                        IsObstacle(tile, leader),
+                _player.DirectionCount,
+                maximumExpandedNodes: -1);
+            if (path.Count >= 2)
+                _player.BeginPath(path, run);
         }
 
         private void UpdateAi(JxqyNpc npc)
@@ -1545,10 +1610,28 @@ namespace Jxqy.Domain.Simulation
             {
                 if (npc.Kind == JxqyCharacterKind.Follower)
                 {
+                    JxqyCharacter leader = ResolvePlayerKindCharacter();
+                    // Original Npc.MoveToPlayer only invokes PartnerMoveTo
+                    // while the player-kind character is moving. An already
+                    // active return route is still allowed to finish below.
+                    if (leader == null || leader.IsStanding)
+                    {
+                        UpdateAmbientMovement(npc);
+                        return;
+                    }
                     int playerDistance =
                         JxqyPathfinder.GetViewTileDistance(
                             npc.TilePosition,
-                            _player.TilePosition);
+                            leader.TilePosition);
+                    if (playerDistance > 20)
+                    {
+                        // Original PartnerMoveTo calls
+                        // Player.ResetPartnerPosition, which resets every
+                        // partner beside the player-kind character.
+                        FollowerResetRequested = true;
+                        npc.Intent = JxqyNpcIntent.Idle;
+                        return;
+                    }
                     if (playerDistance > 2)
                     {
                         // Original Character.PartnerMoveTo runs when the
@@ -1563,7 +1646,7 @@ namespace Jxqy.Domain.Simulation
                         {
                             if (npc.IsWalking)
                                 npc.StopMovementPreservingAction();
-                            TryBeginApproach(npc, _player, run);
+                            TryBeginApproach(npc, leader, run);
                         }
                         return;
                     }

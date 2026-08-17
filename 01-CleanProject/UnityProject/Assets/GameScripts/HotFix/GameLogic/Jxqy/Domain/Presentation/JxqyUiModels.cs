@@ -167,7 +167,8 @@ namespace Jxqy.Domain.Presentation
         public event Action<JxqyUiSound> SoundRequested;
 
         public JxqyPlayer Player { get; set; }
-        public JxqyCharacter CombatTarget { get; set; }
+        public int PlayerIndex { get; private set; }
+        public JxqyNpc HoveredNpc { get; set; }
         public JxqyInventory Inventory { get; set; }
         public JxqyEquipmentManager Equipment { get; set; }
         public IReadOnlyList<JxqyNpc> Npcs { get; set; } =
@@ -206,6 +207,16 @@ namespace Jxqy.Domain.Presentation
             RightPanelScreen ??
             LeftPanelScreen ??
             JxqyUiScreen.Hud;
+
+        public void SetPlayerIndex(int playerIndex, bool notify = true)
+        {
+            int normalized = Math.Max(0, Math.Min(1, playerIndex));
+            if (PlayerIndex == normalized)
+                return;
+            PlayerIndex = normalized;
+            if (notify)
+                Changed?.Invoke();
+        }
         public JxqyUiScreen? ActiveModalScreen =>
             _stack.Count == 0
                 ? null
@@ -217,6 +228,9 @@ namespace Jxqy.Domain.Presentation
             ActiveModalScreen.HasValue ||
             LeftPanelScreen.HasValue ||
             RightPanelScreen.HasValue;
+        public bool RequestsGameplayPause =>
+            _stack.Contains(JxqyUiScreen.Menu) ||
+            _stack.Contains(JxqyUiScreen.SaveLoad);
         public bool IsSaveAllowed => CanSave?.Invoke() ?? true;
         public bool FadeVisible { get; private set; }
         public bool FadeUiReady { get; private set; }
@@ -593,6 +607,11 @@ namespace Jxqy.Domain.Presentation
                                  EquipmentOwner, Inventory, item.Id);
                     break;
                 case JxqyItemKind.Drug:
+                    if (Player.ManaLimit && item.RestoresMana)
+                    {
+                        SetNotice("内力尽失中无法使用药物恢复");
+                        return false;
+                    }
                     result = Inventory.Use(item.Id, Player);
                     break;
                 case JxqyItemKind.Event:

@@ -17,6 +17,7 @@ namespace Jxqy.UnityAdapters
             "refraction",
             "waterfall",
             "occluder",
+            "occluder-grayscale",
             "player-opaque",
             "player-occluded",
             "player-opaque-grayscale",

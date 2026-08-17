@@ -70,6 +70,8 @@ namespace Jxqy.Domain.Simulation
         public bool NoNeedToEquip { get; set; }
         public string UseScript { get; set; } = string.Empty;
         public JxqyStatModifiers Modifiers { get; } = new JxqyStatModifiers();
+        public bool RestoresMana =>
+            Kind == JxqyItemKind.Drug && Mana > 0;
 
         public int CostRaw
         {
@@ -429,6 +431,12 @@ namespace Jxqy.Domain.Simulation
                 target.Level < entry.Definition.MinimumUserLevel)
                 return false;
             JxqyItemDefinition item = entry.Definition;
+            if (target is JxqyPlayer player &&
+                player.ManaLimit &&
+                item.RestoresMana)
+            {
+                return false;
+            }
             target.LifeMax += item.Modifiers.LifeMax;
             target.ThewMax += item.Modifiers.ThewMax;
             target.ManaMax += item.Modifiers.ManaMax;

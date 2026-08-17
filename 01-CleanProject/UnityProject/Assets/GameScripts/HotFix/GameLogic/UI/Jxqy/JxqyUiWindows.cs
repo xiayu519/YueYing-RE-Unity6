@@ -178,6 +178,7 @@ namespace GameLogic
     {
         private GameObject _group;
         private RectTransform _fill;
+        private Image _fillImage;
         private Text _text;
 
         protected override void ScriptGenerator()
@@ -185,9 +186,11 @@ namespace GameLogic
             _group = FindChild("m_group_TargetLife")?.gameObject;
             _fill = FindChildComponent<RectTransform>(
                 "m_group_TargetLife/m_img_TargetLife");
+            _fillImage = _fill?.GetComponent<Image>();
             _text = FindChildComponent<Text>(
                 "m_group_TargetLife/m_text_TargetLife");
-            if (_group == null || _fill == null || _text == null)
+            if (_group == null || _fill == null || _fillImage == null ||
+                _text == null)
                 throw new InvalidOperationException(
                     "JxqyTargetLifeUI prefab hierarchy is incomplete.");
             _group.SetActive(false);
@@ -197,7 +200,7 @@ namespace GameLogic
         {
             if (_group == null)
                 return;
-            JxqyCharacter target = Session?.CombatTarget;
+            JxqyNpc target = Session?.HoveredNpc;
             bool visible = Session?.CurrentScreen != JxqyUiScreen.Title &&
                            target != null && !target.IsDead &&
                            target.IsVisible;
@@ -208,9 +211,38 @@ namespace GameLogic
                 ? 1f
                 : Mathf.Clamp01(target.Life / (float)target.LifeMax);
             _fill.anchorMax = new Vector2(percent, 1f);
-            _text.text = string.IsNullOrWhiteSpace(target.Name)
-                ? $"{target.Life}/{target.LifeMax}"
-                : $"{target.Name}  {target.Life}/{target.LifeMax}";
+            _fillImage.color = GetLifeColor(target);
+            _text.color = target.Relation == JxqyRelationType.Enemy &&
+                          target.ExpBonus > 0
+                ? new Color(200f / 255f, 200f / 255f, 10f / 255f) *
+                  0.9f
+                : Color.white * 0.8f;
+            _text.text = target.Name ?? string.Empty;
+        }
+
+        private static Color GetLifeColor(JxqyNpc target)
+        {
+            if (target.Kind == JxqyCharacterKind.Fighter &&
+                target.Relation == JxqyRelationType.Enemy)
+            {
+                return new Color(
+                    163f / 255f,
+                    18f / 255f,
+                    21f / 255f) * 0.9f;
+            }
+            if ((target.Kind == JxqyCharacterKind.Fighter ||
+                 target.Kind == JxqyCharacterKind.Follower) &&
+                target.Relation == JxqyRelationType.Friend)
+            {
+                return new Color(
+                    16f / 255f,
+                    165f / 255f,
+                    28f / 255f) * 0.9f;
+            }
+            return new Color(
+                40f / 255f,
+                30f / 255f,
+                245f / 255f) * 0.9f;
         }
 
         protected override void OnUpdate() => RefreshView();
@@ -1214,6 +1246,11 @@ namespace GameLogic
         packageName: "JxqyPackage")]
     public sealed class JxqyStatusUI : JxqySessionWindow
     {
+        private RawImage _panel;
+        private Texture _defaultPanelTexture;
+        private Rect _defaultPanelUv;
+        private JxqyUiAnimationBinding _panelBinding;
+        private int _panelPlayerIndex = -1;
         private Text _level;
         private Text _experience;
         private Text _levelUp;
@@ -1225,6 +1262,12 @@ namespace GameLogic
         private Text _evade;
         protected override void ScriptGenerator()
         {
+            _panel = FindChildComponent<RawImage>("m_raw_Panel");
+            if (_panel != null)
+            {
+                _defaultPanelTexture = _panel.texture;
+                _defaultPanelUv = _panel.uvRect;
+            }
             _level = FindChildComponent<Text>("m_text_Level");
             _experience = FindChildComponent<Text>("m_text_Experience");
             _levelUp = FindChildComponent<Text>("m_text_LevelUp");
@@ -1238,6 +1281,7 @@ namespace GameLogic
 
         protected override void RefreshView()
         {
+            RefreshPlayerPanel();
             JxqyPlayer player = Session?.Player;
             if (player == null)
                 return;
@@ -1246,10 +1290,63 @@ namespace GameLogic
             Set(_levelUp, player.LevelUpExperience.ToString());
             Set(_life, $"{player.Life}/{player.LifeMax}");
             Set(_thew, $"{player.Thew}/{player.ThewMax}");
-            Set(_mana, $"{player.Mana}/{player.ManaMax}");
-            Set(_attack, player.Attack.ToString());
-            Set(_defend, player.Defend.ToString());
+            Set(_mana, player.ManaLimit
+                ? "1/1"
+                : $"{player.Mana}/{player.ManaMax}");
+            Set(_attack, FormatCombatValue(
+                player.Attack,
+                player.Attack2,
+                player.Attack3));
+            Set(_defend, FormatCombatValue(
+                player.Defend,
+                player.Defend2,
+                player.Defend3));
             Set(_evade, player.Evade.ToString());
+        }
+
+        protected override void OnUpdate()
+        {
+            _panelBinding?.Tick(Time.unscaledDeltaTime);
+        }
+
+        protected override void OnDestroy()
+        {
+            _panelBinding?.Dispose();
+            _panelBinding = null;
+        }
+
+        private void RefreshPlayerPanel()
+        {
+            if (_panel == null)
+                return;
+            int playerIndex = Session?.PlayerIndex ?? 0;
+            if (_panelPlayerIndex == playerIndex)
+                return;
+            _panelPlayerIndex = playerIndex;
+            _panelBinding?.Dispose();
+            _panelBinding = null;
+            if (playerIndex <= 0)
+            {
+                _panel.texture = _defaultPanelTexture;
+                _panel.uvRect = _defaultPanelUv;
+                _panel.color = Color.white;
+                return;
+            }
+            _panelBinding = new JxqyUiAnimationBinding(_panel);
+            _panelBinding.Set(
+                "common",
+                $"panel5{(char)('a' + playerIndex)}.asf",
+                false);
+        }
+
+        private static string FormatCombatValue(
+            int primary,
+            int secondary,
+            int tertiary)
+        {
+            return secondary == 0 && tertiary == 0
+                ? primary.ToString()
+                : $"{primary}({secondary})({tertiary})";
         }
 
         private static void Set(Text text, string value)
@@ -1911,8 +2008,19 @@ namespace GameLogic
         {
             if (_equipmentPanel == null)
                 return;
-            string file = Session?.PartnerEquipmentTarget?
-                .EquipmentBackgroundFileName ?? string.Empty;
+            string file;
+            if (Session?.PartnerEquipmentTarget != null)
+            {
+                file = Session.PartnerEquipmentTarget
+                    .EquipmentBackgroundFileName ?? string.Empty;
+            }
+            else
+            {
+                int playerIndex = Session?.PlayerIndex ?? 0;
+                file = playerIndex <= 0
+                    ? string.Empty
+                    : $"panel7{(char)('a' + playerIndex)}.asf";
+            }
             if (string.IsNullOrWhiteSpace(file) ||
                 !file.EndsWith(".asf", StringComparison.OrdinalIgnoreCase))
             {
