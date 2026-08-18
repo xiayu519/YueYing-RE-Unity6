@@ -3,9 +3,9 @@ $ErrorActionPreference = 'Stop'
 $cleanRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectPath = Join-Path $cleanRoot 'UnityProject'
 $resourcePath = Join-Path $projectPath 'Assets\AssetRaw\Jxqy'
-$resultPath = Join-Path $projectPath 'Temp\JxqyCleanSetup\setup.result'
-$requestPath = Join-Path $projectPath 'Temp\JxqyCleanSetup\setup.request'
-$progressPath = Join-Path $projectPath 'Temp\JxqyCleanSetup\setup.progress'
+$resultPath = Join-Path $projectPath 'Library\JxqyCleanSetup\setup.result'
+$requestPath = Join-Path $projectPath 'Library\JxqyCleanSetup\setup.request'
+$progressPath = Join-Path $projectPath 'Library\JxqyCleanSetup\setup.progress'
 $logPath = Join-Path $projectPath 'Logs\JxqyCleanSetup.log'
 $unityPath = $env:UNITY_EDITOR
 

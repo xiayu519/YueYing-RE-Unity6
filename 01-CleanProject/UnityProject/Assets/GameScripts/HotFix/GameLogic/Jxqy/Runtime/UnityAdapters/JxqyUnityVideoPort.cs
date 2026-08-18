@@ -74,8 +74,6 @@ namespace Jxqy.UnityAdapters
 
         public void RequestSkip()
         {
-            if (!_isPlaying)
-                return;
             _playbackCompletion?.TrySetResult();
         }
 
@@ -131,6 +129,11 @@ namespace Jxqy.UnityAdapters
                     UniTaskStatus.Faulted)
                 {
                     await completed.Task;
+                }
+                if (completed.Task.Status ==
+                    UniTaskStatus.Succeeded)
+                {
+                    return;
                 }
                 _player.Play();
                 _isPlaying = true;
@@ -227,7 +230,8 @@ namespace Jxqy.UnityAdapters
             var imageObject = new GameObject(
                 "Video",
                 typeof(RectTransform),
-                typeof(RawImage));
+                typeof(RawImage),
+                typeof(Button));
             imageObject.transform.SetParent(overlay.transform, false);
             RectTransform rect = imageObject.GetComponent<RectTransform>();
             rect.anchorMin = Vector2.zero;
@@ -238,6 +242,10 @@ namespace Jxqy.UnityAdapters
             _overlayImage.texture = _targetTexture;
             _overlayImage.color = Color.white;
             _overlayImage.raycastTarget = true;
+            // UI Button 同时接收桌面鼠标和移动端触摸。
+            Button skipButton = imageObject.GetComponent<Button>();
+            skipButton.transition = Selectable.Transition.None;
+            skipButton.onClick.AddListener(RequestSkip);
             overlay.SetActive(false);
         }
 

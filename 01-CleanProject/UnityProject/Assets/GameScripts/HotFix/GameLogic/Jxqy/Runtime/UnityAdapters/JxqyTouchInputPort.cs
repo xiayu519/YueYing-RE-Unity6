@@ -30,10 +30,20 @@ namespace Jxqy.UnityAdapters
         private JxqyInputButtons _buttons;
         private int? _movementTouch;
         private int? _worldTouch;
+        private JxqyInputIntentKind _worldIntent =
+            JxqyInputIntentKind.PointerPrimary;
+        private bool _movementEngaged;
         private long _sequence;
 
         public IReadOnlyDictionary<int, JxqyTouchOwner> ActiveTouches =>
             _owners;
+        public bool HasMovementTouch => _movementTouch.HasValue;
+        public bool HasWorldTouch => _worldTouch.HasValue;
+
+        public bool IsClaimed(int touchId)
+        {
+            return _owners.ContainsKey(touchId);
+        }
 
         public JxqyInputFrame CaptureFrame()
         {
@@ -59,10 +69,15 @@ namespace Jxqy.UnityAdapters
                 return false;
             _worldTouch = touchId;
             _pointer = logicalPosition;
-            _buttons |= JxqyInputButtons.PointerPrimary;
+            _worldIntent =
+                (_buttons & JxqyInputButtons.JumpModifier) != 0
+                    ? JxqyInputIntentKind.Jump
+                    : JxqyInputIntentKind.PointerPrimary;
+            if (_worldIntent == JxqyInputIntentKind.PointerPrimary)
+                _buttons |= JxqyInputButtons.PointerPrimary;
             _buffer.SetPointer(logicalPosition);
             _buffer.Press(
-                JxqyInputIntentKind.PointerPrimary,
+                _worldIntent,
                 pointer: logicalPosition);
             return true;
         }
@@ -94,7 +109,40 @@ namespace Jxqy.UnityAdapters
             _move = direction.LengthSquared > 1
                 ? direction.Normalized
                 : direction;
+            bool engaged = _move.LengthSquared > 0.0001f;
+            if (engaged && !_movementEngaged)
+                _buffer.Press(JxqyInputIntentKind.MobileMove);
+            _movementEngaged = engaged;
             _buffer.SetMove(_move);
+            return true;
+        }
+
+        public bool BeginModifierTouch(
+            int touchId,
+            JxqyInputButtons modifier)
+        {
+            if (modifier != JxqyInputButtons.RunModifier &&
+                modifier != JxqyInputButtons.JumpModifier)
+            {
+                return false;
+            }
+            if (!TryClaim(touchId, JxqyTouchOwner.Action))
+                return false;
+            _buttons |= modifier;
+            return true;
+        }
+
+        public bool EndModifierTouch(
+            int touchId,
+            JxqyInputButtons modifier)
+        {
+            if (!_owners.TryGetValue(touchId, out JxqyTouchOwner owner) ||
+                owner != JxqyTouchOwner.Action)
+            {
+                return false;
+            }
+            _owners.Remove(touchId);
+            _buttons &= ~modifier;
             return true;
         }
 
@@ -130,11 +178,13 @@ namespace Jxqy.UnityAdapters
                     _worldTouch = null;
                     _buttons &= ~JxqyInputButtons.PointerPrimary;
                     _buffer.Release(
-                        JxqyInputIntentKind.PointerPrimary,
+                        _worldIntent,
                         pointer: _pointer);
+                    _worldIntent = JxqyInputIntentKind.PointerPrimary;
                     break;
                 case JxqyTouchOwner.Movement:
                     _movementTouch = null;
+                    _movementEngaged = false;
                     _move = JxqyFloat2.Zero;
                     _buffer.SetMove(_move);
                     break;
@@ -151,6 +201,8 @@ namespace Jxqy.UnityAdapters
             _owners.Clear();
             _movementTouch = null;
             _worldTouch = null;
+            _worldIntent = JxqyInputIntentKind.PointerPrimary;
+            _movementEngaged = false;
             _move = JxqyFloat2.Zero;
             _buttons = JxqyInputButtons.None;
             _buffer.ResetTransientState();
@@ -176,9 +228,11 @@ namespace Jxqy.UnityAdapters
                     flag = JxqyInputButtons.Interact;
                     break;
                 case JxqyInputIntentKind.PrimaryAttack:
+                case JxqyInputIntentKind.MobileDirectionalAttack:
                     flag = JxqyInputButtons.Attack;
                     break;
                 case JxqyInputIntentKind.UseSkill:
+                case JxqyInputIntentKind.MobileDirectionalSkill:
                     flag = slot == 0
                         ? JxqyInputButtons.Skill1
                         : slot == 1
@@ -231,6 +285,54 @@ namespace Jxqy.UnityAdapters
         }
     }
 
+    public sealed class JxqyCombinedInputPort : IJxqyInputPort
+    {
+        private readonly IJxqyInputPort _desktop;
+        private readonly JxqyTouchInputPort _touch;
+        private readonly List<JxqyInputIntent> _intents =
+            new List<JxqyInputIntent>(16);
+        private long _sequence;
+
+        public JxqyCombinedInputPort(
+            IJxqyInputPort desktop,
+            JxqyTouchInputPort touch)
+        {
+            _desktop = desktop ?? throw new ArgumentNullException(
+                nameof(desktop));
+            _touch = touch ?? throw new ArgumentNullException(nameof(touch));
+        }
+
+        public JxqyInputFrame CaptureFrame()
+        {
+            JxqyInputFrame desktop = _desktop.CaptureFrame();
+            JxqyInputFrame touch = _touch.CaptureFrame();
+            bool useTouchMove = _touch.HasMovementTouch;
+            bool useTouchPointer = _touch.HasWorldTouch;
+            return new JxqyInputFrame(
+                checked(++_sequence),
+                useTouchMove ? touch.MoveX : desktop.MoveX,
+                useTouchMove ? touch.MoveY : desktop.MoveY,
+                useTouchPointer ? touch.PointerX : desktop.PointerX,
+                useTouchPointer ? touch.PointerY : desktop.PointerY,
+                desktop.Buttons | touch.Buttons);
+        }
+
+        public IReadOnlyList<JxqyInputIntent> CaptureIntents()
+        {
+            _intents.Clear();
+            _intents.AddRange(_desktop.CaptureIntents());
+            _intents.AddRange(_touch.CaptureIntents());
+            return _intents;
+        }
+
+        public void ResetTransientState()
+        {
+            _desktop.ResetTransientState();
+            _touch.ResetTransientState();
+            _intents.Clear();
+        }
+    }
+
     public sealed class JxqyWorldTouchSurface : MonoBehaviour,
         IPointerDownHandler,
         IDragHandler,
@@ -253,75 +355,6 @@ namespace Jxqy.UnityAdapters
         public void OnPointerUp(PointerEventData eventData)
         {
             JxqyTouchInputBridge.Port?.EndTouch(eventData.pointerId);
-        }
-    }
-
-    public sealed class JxqyVirtualJoystickInput : MonoBehaviour,
-        IPointerDownHandler,
-        IDragHandler,
-        IPointerUpHandler
-    {
-        [SerializeField] private RectTransform _movementArea;
-        [SerializeField, Min(1)] private float _radius = 80f;
-
-        public void OnPointerDown(PointerEventData eventData)
-        {
-            if (JxqyTouchInputBridge.Port?.BeginMovementTouch(
-                    eventData.pointerId) == true)
-                UpdateMove(eventData);
-        }
-
-        public void OnDrag(PointerEventData eventData)
-        {
-            UpdateMove(eventData);
-        }
-
-        public void OnPointerUp(PointerEventData eventData)
-        {
-            JxqyTouchInputBridge.Port?.EndTouch(eventData.pointerId);
-        }
-
-        private void UpdateMove(PointerEventData eventData)
-        {
-            RectTransform area = _movementArea != null
-                ? _movementArea
-                : transform as RectTransform;
-            if (area == null ||
-                !RectTransformUtility.ScreenPointToLocalPointInRectangle(
-                    area,
-                    eventData.position,
-                    eventData.pressEventCamera,
-                    out Vector2 local))
-                return;
-            Vector2 direction = local / Mathf.Max(1, _radius);
-            JxqyTouchInputBridge.Port?.SetVirtualMove(
-                eventData.pointerId,
-                new JxqyFloat2(direction.x, direction.y));
-        }
-    }
-
-    public sealed class JxqyActionButtonInput : MonoBehaviour,
-        IPointerDownHandler,
-        IPointerUpHandler
-    {
-        [SerializeField] private JxqyInputIntentKind _intent =
-            JxqyInputIntentKind.PrimaryAttack;
-        [SerializeField] private int _slot = -1;
-
-        public void OnPointerDown(PointerEventData eventData)
-        {
-            JxqyTouchInputBridge.Port?.BeginActionTouch(
-                eventData.pointerId,
-                _intent,
-                _slot);
-        }
-
-        public void OnPointerUp(PointerEventData eventData)
-        {
-            JxqyTouchInputBridge.Port?.EndTouch(
-                eventData.pointerId,
-                _intent,
-                _slot);
         }
     }
 

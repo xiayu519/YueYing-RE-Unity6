@@ -23,9 +23,16 @@ namespace Jxqy.Bootstrap
         private JxqyUnityAudioPort _audioPort;
         private JxqyUnityVideoPort _videoPort;
         private JxqyYooAssetResourcePort _mediaResources;
+        private JxqyCombinedInputPort _combinedInput;
 
         public JxqyDesktopInputPort DesktopInput { get; private set; }
-        public IJxqyInputPort ActiveInput => DesktopInput;
+        public JxqyTouchInputPort TouchInput { get; private set; }
+#if UNITY_ANDROID || UNITY_IOS
+        public IJxqyInputPort ActiveInput => TouchInput;
+#else
+        public IJxqyInputPort ActiveInput =>
+            _combinedInput ?? (IJxqyInputPort)DesktopInput;
+#endif
         public int InputIntentCoverageMask =>
             _playableRuntime?.InputIntentCoverageMask ?? 0;
 #if UNITY_EDITOR
@@ -331,6 +338,11 @@ namespace Jxqy.Bootstrap
             bool initializeMediaPorts = true)
         {
             DesktopInput ??= new JxqyDesktopInputPort();
+            TouchInput ??= new JxqyTouchInputPort();
+            _combinedInput ??= new JxqyCombinedInputPort(
+                DesktopInput,
+                TouchInput);
+            JxqyTouchInputBridge.Port = TouchInput;
             if (initializeMediaPorts && audio == null)
             {
                 _audioPort ??=
@@ -353,7 +365,7 @@ namespace Jxqy.Bootstrap
                 JxqyApplicationLifecycle>();
             _lifecycle.Initialize(
                 new JxqyUnityClock(),
-                new IJxqyInputPort[] { DesktopInput },
+                new[] { ActiveInput },
                 audio,
                 video);
         }
@@ -453,6 +465,11 @@ namespace Jxqy.Bootstrap
 
         private void OnDestroy()
         {
+            if (ReferenceEquals(JxqyTouchInputBridge.Port, TouchInput))
+                JxqyTouchInputBridge.Port = null;
+            _combinedInput?.ResetTransientState();
+            _combinedInput = null;
+            TouchInput = null;
             _playableCancellation?.Cancel();
             _playableCancellation?.Dispose();
             _playableCancellation = null;

@@ -33,6 +33,9 @@ namespace Jxqy.Domain.Input
         LegacyTurnBack,
         ForceAttack,
         ToggleFullscreen,
+        MobileMove,
+        MobileDirectionalAttack,
+        MobileDirectionalSkill,
     }
 
     public enum JxqyInputPhase
@@ -105,7 +108,9 @@ namespace Jxqy.Domain.Input
                 throw new ArgumentException(
                     "移动和指针意图必须使用专用工厂。",
                     nameof(kind));
-            if (kind == JxqyInputIntentKind.UseSkill && slot < 0)
+            if ((kind == JxqyInputIntentKind.UseSkill ||
+                 kind == JxqyInputIntentKind.MobileDirectionalSkill) &&
+                slot < 0)
                 throw new ArgumentOutOfRangeException(nameof(slot));
             return new JxqyInputIntent(
                 sequence,

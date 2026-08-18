@@ -178,6 +178,7 @@ namespace Jxqy.Domain.Presentation
         public int LittleMapViewX { get; set; }
         public int LittleMapViewY { get; set; }
         public Func<JxqyFloat2, bool, bool> TryMoveFromLittleMap { get; set; }
+        public Func<bool> IsRunModifierHeld { get; set; }
         public JxqyNpc PartnerEquipmentTarget { get; private set; }
         public JxqyCharacter EquipmentOwner =>
             PartnerEquipmentTarget ?? (JxqyCharacter)Player;
@@ -207,6 +208,22 @@ namespace Jxqy.Domain.Presentation
             RightPanelScreen ??
             LeftPanelScreen ??
             JxqyUiScreen.Hud;
+        public JxqyUiScreen? SharedBackdropScreen
+        {
+            get
+            {
+                JxqyUiScreen? modal = ActiveModalScreen;
+                if (modal.HasValue)
+                {
+                    return UsesSharedBackdrop(modal.Value)
+                        ? modal
+                        : null;
+                }
+                if (RightPanelScreen.HasValue)
+                    return RightPanelScreen;
+                return LeftPanelScreen;
+            }
+        }
 
         public void SetPlayerIndex(int playerIndex, bool notify = true)
         {
@@ -396,6 +413,13 @@ namespace Jxqy.Domain.Presentation
             Changed?.Invoke();
         }
 
+        public void CloseSharedBackdropScreen()
+        {
+            JxqyUiScreen? screen = SharedBackdropScreen;
+            if (screen.HasValue)
+                Close(screen.Value);
+        }
+
         public void OpenPlayerEquipment()
         {
             PartnerEquipmentTarget = null;
@@ -471,6 +495,14 @@ namespace Jxqy.Domain.Presentation
             return screen == JxqyUiScreen.Inventory ||
                    screen == JxqyUiScreen.Skills ||
                    screen == JxqyUiScreen.Memo;
+        }
+
+        private static bool UsesSharedBackdrop(JxqyUiScreen screen)
+        {
+            return IsLeftPanelScreen(screen) ||
+                   IsRightPanelScreen(screen) ||
+                   screen == JxqyUiScreen.LittleMap ||
+                   screen == JxqyUiScreen.Menu;
         }
 
         private bool HasSoundWindowOpen()

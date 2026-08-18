@@ -2,6 +2,8 @@
 
 这是一个基于 Unity 6 的《剑侠情缘外传：月影传说》复刻工程，目标是在现代环境中忠实还原原作的剧情、战斗、数值、流程与演出，并在此基础上完成适合现代 Unity 工作流的本土化整理。
 
+当前工程同时支持 PC 鼠标键盘与 Android 触屏操作。Android Build Target 下提供虚拟摇杆、快跑、攻击、跳跃、技能/道具、小地图和打坐按钮；地面、敌人、箱子与剧情录像点击使用统一的 Unity 指针事件。小弹窗使用共享半透明背景，并支持按当前最上层窗口逐个关闭。
+
 > 本项目仅用于学习、研究与技术交流。Git 仓库不包含原游戏美术、音频、视频等资源；运行游戏所需资源必须由使用者单独获取并导入。
 
 > 开发进度说明：由于开发者精力有限，目前只人工跑完一次完美结局。其他剧情分支如遇到遗漏问题，欢迎通过 [GitHub Issues](https://github.com/xiayu519/YueYing-RE-Unity6/issues) 反馈，也欢迎基于本工程自行排查和修复。
@@ -19,7 +21,7 @@
 - [Unity 月影传说 PC 体验包](https://github.com/xiayu519/YueYing-RE-Unity6/releases/download/windows-il2cpp-20260810/JxqyHD-Windows-x64-IL2CPP-20260818.zip)：下载后解压，运行 `JxqyHD.exe`。
 - [Unity 月影传说 Android 体验包](https://github.com/xiayu519/YueYing-RE-Unity6/releases/download/android-il2cpp-20260818/JxqyHD.apk)：适用于 Android 8.0 及以上的 ARMv7/ARM64 设备，下载 APK 后安装；当前使用体验验证签名。
 - [开发者资源包（百度网盘下载信息）](https://github.com/xiayu519/YueYing-RE-Unity6/releases/download/windows-il2cpp-20260810/JxqyResources-20260810-BaiduNetdisk.txt)：TXT 内含 `JxqyResources-20260810.unitypackage` 的百度网盘链接和提取码。
-- [累计资源补丁（全流程修复）](https://github.com/xiayu519/YueYing-RE-Unity6/releases/download/windows-il2cpp-20260810/JxqyResources-Patch-Cumulative.unitypackage)：导入基础资源包后再导入此补丁，并确认覆盖同名文件；已经导入基础资源包或旧版补丁的工程只需导入这一个累计补丁。
+- [累计资源补丁（移动端操控与全流程修复）](https://github.com/xiayu519/YueYing-RE-Unity6/releases/download/mobile-controls-20260818/JxqyResources-Patch-Cumulative.unitypackage)：包含移动端 HUD、共享弹窗遮罩，以及此前的装备、剧情、数值和显示修复。导入基础资源包后再导入此补丁，并确认覆盖同名文件；已经导入基础资源包或旧版补丁的工程只需覆盖导入这一份累计补丁。
 
 ## 开发环境
 

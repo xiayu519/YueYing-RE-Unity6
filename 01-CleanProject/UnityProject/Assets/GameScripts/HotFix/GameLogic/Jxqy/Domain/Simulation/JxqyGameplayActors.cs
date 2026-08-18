@@ -438,6 +438,30 @@ namespace Jxqy.Domain.Simulation
             return true;
         }
 
+        public bool TryBeginManualMovement(bool run)
+        {
+            if (!CanPerformAction || run && IsRunDisabled)
+            {
+                return false;
+            }
+
+            SetState(
+                run
+                    ? IsInFighting
+                        ? JxqyCharacterState.FightRun
+                        : JxqyCharacterState.Run
+                    : IsInFighting
+                        ? JxqyCharacterState.FightWalk
+                        : JxqyCharacterState.Walk);
+            return true;
+        }
+
+        public void EndManualMovement()
+        {
+            if (!HasPath && (IsWalking || IsRunning))
+                Stop();
+        }
+
         public bool BeginJump(
             JxqyFloat2 destination,
             Func<JxqyIntPoint, bool> canEnterTile = null)

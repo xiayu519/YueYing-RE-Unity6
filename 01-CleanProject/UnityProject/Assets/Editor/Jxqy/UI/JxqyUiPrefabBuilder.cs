@@ -47,6 +47,7 @@ namespace Jxqy.Editor.UI
         {
             "JxqyTitleUI",
             "JxqyFadeUI",
+            "JxqySharedBackdropUI",
             "JxqyNoticeUI",
             "JxqyHudUI",
             "JxqyPartnerHeadsUI",
@@ -104,6 +105,7 @@ namespace Jxqy.Editor.UI
             if (!PrefabExists("JxqyTitleUI"))
                 BuildTitle();
             BuildFade();
+            BuildSharedBackdrop();
             BuildNotice();
             BuildHud();
             BuildPartnerHeads();
@@ -151,6 +153,7 @@ namespace Jxqy.Editor.UI
                 throw new FileNotFoundException(
                     $"Jxqy native UI font is missing: " +
                     $"{NativeFontAssetPath}");
+            BuildSharedBackdrop();
             BuildPartnerHeads();
             BuildLittleMap();
             BuildTargetLife();
@@ -242,6 +245,15 @@ namespace Jxqy.Editor.UI
                 $"Jxqy UI fonts validated: Prefabs={prefabCount}, " +
                 $"Texts={textCount}, Missing=0; {NativeFontAssetPath}, " +
                 DialogueFontAssetPath);
+        }
+
+        [MenuItem("TEngine/Jxqy/Build Shared Backdrop Prefab")]
+        public static void BuildSharedBackdropOnly()
+        {
+            Directory.CreateDirectory(OutputDirectory);
+            BuildSharedBackdrop();
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
         }
 
         [MenuItem("TEngine/Jxqy/Use Built-in UI Text Outlines")]
@@ -358,6 +370,22 @@ namespace Jxqy.Editor.UI
             Save(root);
         }
 
+        private static void BuildSharedBackdrop()
+        {
+            GameObject root = CreateCanvas("JxqySharedBackdropUI");
+            GameObject maskObject = CreateUiObject(
+                "m_btn_Mask",
+                root.transform);
+            Stretch(maskObject.GetComponent<RectTransform>());
+            UIImage maskImage = maskObject.AddComponent<UIImage>();
+            maskImage.color = new Color(0f, 0f, 0f, 0.5f);
+            maskImage.raycastTarget = true;
+            Button maskButton = maskObject.AddComponent<Button>();
+            maskButton.targetGraphic = maskImage;
+            maskButton.transition = Selectable.Transition.None;
+            SaveResponsive(root);
+        }
+
         private static void BuildNotice()
         {
             GameObject root = CreateCanvas("JxqyNoticeUI");
@@ -399,6 +427,13 @@ namespace Jxqy.Editor.UI
                         StringComparison.OrdinalIgnoreCase))
                 {
                     BuildRuntimeOwnedUiPrefabs();
+                }
+                else if (string.Equals(
+                        request,
+                        "shared-backdrop-only",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    BuildSharedBackdropOnly();
                 }
                 else if (string.Equals(
                         request,

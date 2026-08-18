@@ -305,6 +305,7 @@ namespace Jxqy.Bootstrap
         private JxqyTrapRegistry _savedTrapRegistry = new();
         private JxqyAnimationPlayer _playerSpecialAction;
         private JxqyPendingMagicCast _pendingPlayerMagicCast;
+        private bool _manualPlayerMovementActive;
         private JxqyCharacterState _playerVisualState =
             (JxqyCharacterState)(-1);
         private int _playerVisualStateVersion = -1;
@@ -1618,6 +1619,8 @@ namespace Jxqy.Bootstrap
                 CanSave = CanSaveGame,
                 Npcs = _npcs?.Npcs ?? Array.Empty<JxqyNpc>(),
                 TryMoveFromLittleMap = TryMovePlayerFromLittleMap,
+                IsRunModifierHeld = () =>
+                    IsRunRequested(_input.CaptureFrame()),
             };
             for (int slot = 0; slot < 7; slot++)
             {
@@ -3739,6 +3742,130 @@ namespace Jxqy.Bootstrap
             };
         }
 
+        private async UniTask CreateNpcVisualsAsync(
+            IReadOnlyList<JxqyNpc> npcs,
+            CancellationToken cancellationToken)
+        {
+            if (npcs == null || npcs.Count == 0)
+                return;
+            string[] resourceFiles = npcs
+                .Select(npc => SafeLegacyFileName(
+                    npc.NpcIniFileName,
+                    ".ini"))
+                .Where(fileName => fileName.Length != 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            await PreloadInBatchesAsync(
+                resourceFiles,
+                PreloadNpcStandResourceAsync,
+                cancellationToken);
+            for (int index = 0; index < npcs.Count; index++)
+            {
+                await CreateNpcVisualAsync(
+                    npcs[index],
+                    cancellationToken);
+            }
+        }
+
+        private async UniTask PreloadNpcStandResourceAsync(
+            string iniFile,
+            CancellationToken cancellationToken)
+        {
+            string text = await LoadDynamicTextAsync(
+                "ini/npcres",
+                iniFile,
+                cancellationToken);
+            Dictionary<string, Dictionary<string, string>> sections =
+                JxqyLegacySaveImporter.ParseIni(text);
+            string imageFile = GetStateImage(
+                sections,
+                JxqyCharacterState.Stand.ToString());
+            if (string.IsNullOrWhiteSpace(imageFile) ||
+                !JxqyResourceAddressCatalog.TryResolveAnimationAddress(
+                    imageFile,
+                    out _,
+                    "character",
+                    "object"))
+            {
+                return;
+            }
+            await LoadDynamicAnimationAsync(
+                imageFile,
+                cancellationToken,
+                "character",
+                "object");
+        }
+
+        private async UniTask PreloadObjectResourcesAsync(
+            IReadOnlyList<JxqyWorldObject> objects,
+            CancellationToken cancellationToken)
+        {
+            if (objects == null || objects.Count == 0)
+                return;
+            string[] resourceFiles = objects
+                .Where(worldObject =>
+                    worldObject.Kind != JxqyObjectKind.LoopingSound &&
+                    worldObject.Kind != JxqyObjectKind.RandomSound)
+                .Select(worldObject => SafeLegacyFileName(
+                    worldObject.ResourceFileName,
+                    ".ini"))
+                .Where(fileName => fileName.Length != 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            await PreloadInBatchesAsync(
+                resourceFiles,
+                PreloadObjectResourceAsync,
+                cancellationToken);
+        }
+
+        private async UniTask PreloadObjectResourceAsync(
+            string iniFile,
+            CancellationToken cancellationToken)
+        {
+            string text = await LoadDynamicTextAsync(
+                "ini/objres",
+                iniFile,
+                cancellationToken);
+            Dictionary<string, Dictionary<string, string>> sections =
+                JxqyLegacySaveImporter.ParseIni(text);
+            string imageFile = GetStateImage(sections, "Common");
+            if (string.IsNullOrWhiteSpace(imageFile) ||
+                IsInvisibleObjectPlaceholder(imageFile))
+            {
+                return;
+            }
+            await LoadDynamicAnimationAsync(
+                imageFile,
+                cancellationToken,
+                "object",
+                "character");
+        }
+
+        private static async UniTask PreloadInBatchesAsync(
+            IReadOnlyList<string> resources,
+            Func<string, CancellationToken, UniTask> load,
+            CancellationToken cancellationToken)
+        {
+            for (int batchStart = 0;
+                 batchStart < resources.Count;
+                 batchStart +=
+                     JxqyMapPreloadCoordinator.ResourceLoadBatchSize)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                int batchCount = Math.Min(
+                    JxqyMapPreloadCoordinator.ResourceLoadBatchSize,
+                    resources.Count - batchStart);
+                var tasks = new UniTask[batchCount];
+                for (int offset = 0; offset < batchCount; offset++)
+                {
+                    tasks[offset] = load(
+                        resources[batchStart + offset],
+                        cancellationToken);
+                }
+                await UniTask.WhenAll(tasks);
+            }
+        }
+
         private async UniTask CreateNpcVisualAsync(
             JxqyNpc npc,
             CancellationToken cancellationToken)
@@ -3811,6 +3938,23 @@ namespace Jxqy.Bootstrap
             RefreshActorVisual(npc);
         }
 
+        private async UniTaskVoid LoadNpcActionOnDemandAsync(
+            JxqyNpc npc,
+            JxqyRuntimeActorVisual visual,
+            int state,
+            string fileName)
+        {
+            try
+            {
+                JxqyAnimationMetadata metadata =
+                    await LoadDynamicAnimationAsync(
+                        fileName,
+                        this.GetCancellationTokenOnDestroy(),
+                        "character",
+                        "object");
+                if (!_npcVisuals.TryGetValue(
+                        npc,
+                        out JxqyRuntimeActorVisual current) ||
                     !ReferenceEquals(current, visual) ||
                     !visual.ActionFileNames.TryGetValue(
                         state,
@@ -7148,11 +7292,13 @@ namespace Jxqy.Bootstrap
         }
 
         private static int GetMaximumBasicAttackDistance(
-            JxqyNpc npc)
+            JxqyCharacter character)
         {
-            int maximum = Math.Max(1, npc.AttackRadius);
+            int maximum = character is JxqyNpc npc
+                ? Math.Max(1, npc.AttackRadius)
+                : 1;
             foreach (JxqyRangedMagicReference reference in
-                     npc.AdditionalBasicMagics)
+                     character.AdditionalBasicMagics)
             {
                 maximum = Math.Max(
                     maximum,
@@ -9923,7 +10069,7 @@ namespace Jxqy.Bootstrap
                 !specialActionActive;
             if (scriptedMovement && !IsPlayerJumpTakeoffFrame())
                 _player.TickMovement(elapsed, IsPlayerPathTileBlocked);
-            bool manualMovement =
+            bool manualMovementRequested =
                 _gameStarted &&
                 !_legacyInputDisabled &&
                 !_legacyKeyboardMovementThisFrame &&
@@ -9939,20 +10085,29 @@ namespace Jxqy.Bootstrap
                 _player.WantsToRun(
                     IsRunRequested(input),
                     useThewWhenNormalRun: true);
-            bool manualRunning = manualMovement && runRequested;
+            bool manualRunning = manualMovementRequested && runRequested;
+            bool manualMovement =
+                manualMovementRequested &&
+                _player.TryBeginManualMovement(manualRunning);
+            if (!manualMovement && _manualPlayerMovementActive)
+                _player.EndManualMovement();
+            _manualPlayerMovementActive = manualMovement;
             bool moving = scriptedMovement || manualMovement;
             if (manualMovement)
             {
                 ClearPendingInteraction();
                 JxqyFloat2 previous = _player.PositionInWorld;
-                _player.Move(
-                    new JxqyFloat2(input.MoveX, -input.MoveY),
-                    elapsed,
-                    manualRunning
-                        ? Math.Max(1, _player.RunSpeedFold) *
-                          _player.MoveSpeedScale
-                        : _player.WalkSpeed *
-                          _player.MoveSpeedScale);
+                if (!_player.IsMovementDisabled)
+                {
+                    _player.Move(
+                        new JxqyFloat2(input.MoveX, -input.MoveY),
+                        elapsed,
+                        manualRunning
+                            ? Math.Max(1, _player.RunSpeedFold) *
+                              _player.MoveSpeedScale
+                            : _player.WalkSpeed *
+                              _player.MoveSpeedScale);
+                }
                 JxqyIntPoint tile = _player.TilePosition;
                 if (CreateLiveCollisionMap()
                     .IsObstacleForCharacter(tile))
@@ -10267,6 +10422,21 @@ namespace Jxqy.Bootstrap
                         if (_gameStarted && !_uiSession.IsModal)
                             SelectPlayerAttackTarget();
                         break;
+                    case JxqyInputIntentKind.MobileMove:
+                        HandleMobileMoveStarted();
+                        break;
+                    case JxqyInputIntentKind.MobileDirectionalAttack:
+                        HandleMobileDirectionalAttack();
+                        break;
+                    case JxqyInputIntentKind.MobileDirectionalSkill:
+                        if (_gameStarted &&
+                            !_uiSession.IsModal &&
+                            intent.Slot >= 0)
+                        {
+                            UseMobileDirectionalMagicShortcut(
+                                intent.Slot);
+                        }
+                        break;
                     case JxqyInputIntentKind.UseSkill:
                         if (_gameStarted &&
                             !_uiSession.IsModal &&
@@ -10398,10 +10568,74 @@ namespace Jxqy.Bootstrap
             JxqyInputFrame frame)
         {
             if (!CanAcceptLegacyKeyboardMovement() ||
-                _player.HasPath || direction < 0 || direction > 7)
+                direction < 0 || direction > 7)
             {
                 return;
             }
+
+            bool runRequested = _player.WantsToRun(
+                IsRunRequested(frame),
+                useThewWhenNormalRun: true);
+            if (_player.HasPath)
+            {
+                if (!_player.IsWalking && !_player.IsRunning)
+                    return;
+
+                if (_player.CurrentDirection != direction)
+                {
+                    // A new keyboard direction has the same immediate
+                    // retargeting contract as a fresh mouse movement click:
+                    // replace the route from the actor's exact current
+                    // position instead of waiting for the next tile center.
+                    BeginLegacyKeyboardPath(direction, runRequested);
+                    return;
+                }
+
+                SynchronizeLegacyKeyboardRunState(runRequested);
+
+                // Keep the waypoint currently being approached and replace
+                // only its tail. This maintains one tile of lookahead while
+                // a keyboard direction is held, so movement does not stop
+                // and restart at every tile boundary.
+                JxqyIntPoint anchor = _player.NextPathTilePosition;
+                JxqyIntPoint continuedDestination =
+                    JxqyPathfinder.GetAllNeighbors(anchor)[direction];
+                JxqyIntPoint anchorWorld =
+                    JxqyIsometricMapMath.TileToWorldPixel(
+                        anchor.X,
+                        anchor.Y);
+                if (CreateLiveCollisionMap()
+                    .IsObstacleForCharacter(continuedDestination))
+                {
+                    _player.RetargetPath(new[]
+                    {
+                        new JxqyFloat2(anchorWorld.X, anchorWorld.Y),
+                    });
+                    MoveStandingPartnersTo(continuedDestination);
+                    return;
+                }
+
+                JxqyIntPoint continuedWorld =
+                    JxqyIsometricMapMath.TileToWorldPixel(
+                        continuedDestination.X,
+                        continuedDestination.Y);
+                _player.RetargetPath(new[]
+                {
+                    new JxqyFloat2(anchorWorld.X, anchorWorld.Y),
+                    new JxqyFloat2(
+                        continuedWorld.X,
+                        continuedWorld.Y),
+                });
+                return;
+            }
+
+            BeginLegacyKeyboardPath(direction, runRequested);
+        }
+
+        private void BeginLegacyKeyboardPath(
+            int direction,
+            bool runRequested)
+        {
             JxqyIntPoint current = _player.TilePosition;
             JxqyIntPoint destination =
                 JxqyPathfinder.GetAllNeighbors(current)[direction];
@@ -10430,10 +10664,21 @@ namespace Jxqy.Bootstrap
             _playerAutoAttack.Target = null;
             _player.BeginPath(
                 path,
-                _player.WantsToRun(
-                    IsRunRequested(frame),
-                    useThewWhenNormalRun: true) &&
-                !_player.IsRunDisabled);
+                runRequested);
+        }
+
+        private void SynchronizeLegacyKeyboardRunState(bool runRequested)
+        {
+            if (_player.IsRunning == runRequested)
+                return;
+            _player.SetState(
+                runRequested
+                    ? _player.IsInFighting
+                        ? JxqyCharacterState.FightRun
+                        : JxqyCharacterState.Run
+                    : _player.IsInFighting
+                        ? JxqyCharacterState.FightWalk
+                        : JxqyCharacterState.Walk);
         }
 
         private void HandleLegacyKeyboardTurn(int delta)
@@ -10586,6 +10831,150 @@ namespace Jxqy.Bootstrap
                     target);
                 return;
             }
+        }
+
+        private void HandleMobileMoveStarted()
+        {
+            if (!_gameStarted ||
+                _legacyInputDisabled ||
+                _uiSession.IsModal ||
+                (_scriptSession?.IsRunning ?? false) ||
+                _player == null ||
+                _player.IsDead ||
+                _player.IsSpecialActionActive ||
+                !_player.HasPath)
+            {
+                return;
+            }
+            ClearPendingInteraction();
+            _player.StopMovementPreservingAction();
+        }
+
+        private void HandleMobileDirectionalAttack()
+        {
+            if (!_gameStarted ||
+                _uiSession.IsModal ||
+                (_scriptSession?.IsRunning ?? false) ||
+                _player == null)
+            {
+                return;
+            }
+            ClearPendingInteraction();
+            BeginBasicAttackAt(
+                _player,
+                GetFacingWorldDestination(
+                    _player,
+                    GetMaximumBasicAttackDistance(_player)));
+        }
+
+        private void UseMobileDirectionalMagicShortcut(int slot)
+        {
+            if (slot < 0 || slot >= 5)
+                return;
+            JxqySkillEntry entry =
+                _skills.FindAtLegacyIndex(40 + slot);
+            if (entry == null)
+                return;
+            for (int index = 0; index < _skills.Skills.Count; index++)
+            {
+                if (!ReferenceEquals(_skills.Skills[index], entry))
+                    continue;
+                _uiSession.SelectSkill(index);
+                JxqyMagicDefinition magic = entry.Magic;
+                bool healing = IsLifeHealingMagic(magic);
+                JxqyNpc target = healing
+                    ? FindFacingMobileMagicTarget(
+                        magic,
+                        npc =>
+                            npc.Kind == JxqyCharacterKind.Follower &&
+                            npc.Relation == JxqyRelationType.Friend)
+                    : FindFacingMobileMagicTarget(
+                        magic,
+                        npc => JxqyRelations.AreOpposed(_player, npc));
+                JxqyFloat2 destination;
+                if (target != null)
+                {
+                    destination = target.PositionInWorld;
+                }
+                else if (healing)
+                {
+                    destination = _player.PositionInWorld;
+                }
+                else
+                {
+                    int tileDistance = Math.Max(
+                        1,
+                        (int)Math.Ceiling(
+                            Math.Max(48f, magic?.Range ?? 48f) / 48f));
+                    destination = GetFacingWorldDestination(
+                        _player,
+                        tileDistance);
+                }
+                TryUsePlayerSkill(
+                    index,
+                    destination,
+                    target);
+                return;
+            }
+        }
+
+        private JxqyNpc FindFacingMobileMagicTarget(
+            JxqyMagicDefinition magic,
+            Func<JxqyNpc, bool> predicate)
+        {
+            if (_npcs == null || _player == null || predicate == null)
+                return null;
+            float range = Math.Max(48f, magic?.Range ?? 48f);
+            float maximumDistanceSquared = range * range;
+            JxqyNpc nearest = null;
+            float nearestDistanceSquared = float.MaxValue;
+            foreach (JxqyNpc npc in _npcs.Npcs)
+            {
+                if (npc == null ||
+                    !npc.IsVisible ||
+                    npc.IsDead ||
+                    !predicate(npc))
+                {
+                    continue;
+                }
+                JxqyFloat2 offset =
+                    npc.PositionInWorld - _player.PositionInWorld;
+                float distanceSquared = offset.LengthSquared;
+                if (distanceSquared > maximumDistanceSquared ||
+                    distanceSquared >= nearestDistanceSquared ||
+                    JxqyDirection.GetIndex(
+                        offset,
+                        _player.DirectionCount) !=
+                    _player.CurrentDirection)
+                {
+                    continue;
+                }
+                nearest = npc;
+                nearestDistanceSquared = distanceSquared;
+            }
+            return nearest;
+        }
+
+        private static bool IsLifeHealingMagic(
+            JxqyMagicDefinition magic)
+        {
+            return magic != null &&
+                   magic.MoveKind == 13 &&
+                   magic.SpecialKind == 1;
+        }
+
+        private static JxqyFloat2 GetFacingWorldDestination(
+            JxqyCharacter character,
+            int tileDistance)
+        {
+            JxqyIntPoint tile = character.TilePosition;
+            int direction = character.CurrentDirection;
+            int steps = Math.Max(1, tileDistance);
+            for (int index = 0; index < steps; index++)
+                tile = JxqyPathfinder.GetAllNeighbors(tile)[direction];
+            JxqyIntPoint world =
+                JxqyIsometricMapMath.TileToWorldPixel(tile.X, tile.Y);
+            return new JxqyFloat2(world.X, world.Y);
         }
 
         private void HandlePointerPrimary(

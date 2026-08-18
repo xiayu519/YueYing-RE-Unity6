@@ -1,11 +1,12 @@
 {
   "sourceRepository": "https://github.com/xiayu519/YueYing-RE.git",
-  "sourceCommit": "5cc2c71ede4398f92fa7970b2ee948586bb0a59a",
+  "sourceCommit": "8a8cb000d8ee2b1f09ddb5e2fbcb0bea1465e691",
   "unityVersion": "6000.5.4f1",
   "resourcePackage": "JxqyResources-20260810.unitypackage",
   "resourcePatch": "JxqyResources-Patch-Cumulative.unitypackage",
   "cleanProjectMode": "EditorSimulateMode",
   "windowsDelivery": "IL2CPP",
+  "androidDelivery": "IL2CPP ARMv7+ARM64",
   "resourceContent": "ExternalDownload",
   "resourceEncryption": "FileOffSet"
 }

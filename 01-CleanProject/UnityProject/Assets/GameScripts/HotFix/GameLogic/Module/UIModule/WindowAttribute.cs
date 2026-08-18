@@ -7,6 +7,7 @@ namespace GameLogic
     /// </summary>
     public enum UILayer : int
     {
+        Backdrop = -1,
         Bottom = 0,
         UI = 1,
         Top = 2,

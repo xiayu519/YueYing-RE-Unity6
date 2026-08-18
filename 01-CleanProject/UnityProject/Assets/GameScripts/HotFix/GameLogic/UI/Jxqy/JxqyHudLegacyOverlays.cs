@@ -207,6 +207,7 @@ namespace GameLogic
             {
                 _littleMapMarkerBindings[index].Tick(elapsedSeconds);
             }
+#if !UNITY_ANDROID && !UNITY_IOS
             if (Input.GetKey(KeyCode.LeftArrow))
                 PanLittleMap(-8, 0);
             if (Input.GetKey(KeyCode.RightArrow))
@@ -215,6 +216,7 @@ namespace GameLogic
                 PanLittleMap(0, -4);
             if (Input.GetKey(KeyCode.DownArrow))
                 PanLittleMap(0, 4);
+#endif
             RefreshView();
         }
 
@@ -361,8 +363,7 @@ namespace GameLogic
                 new JxqyFloat2(
                     mapX * LittleMapRatio,
                     mapY * LittleMapRatio),
-                Input.GetKey(KeyCode.LeftShift) ||
-                Input.GetKey(KeyCode.RightShift)) ?? false;
+                Session.IsRunModifierHeld?.Invoke() ?? false) ?? false;
             if (accepted)
             {
                 CloseLittleMap();

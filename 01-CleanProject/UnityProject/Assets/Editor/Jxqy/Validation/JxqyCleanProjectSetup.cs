@@ -12,11 +12,11 @@ namespace Jxqy.Editor.Validation
     {
         private const string ResourceRoot = "Assets/AssetRaw/Jxqy";
         private const string RequestRelativePath =
-            "Temp/JxqyCleanSetup/setup.request";
+            "Library/JxqyCleanSetup/setup.request";
         private const string ResultRelativePath =
-            "Temp/JxqyCleanSetup/setup.result";
+            "Library/JxqyCleanSetup/setup.result";
         private const string ProgressRelativePath =
-            "Temp/JxqyCleanSetup/setup.progress";
+            "Library/JxqyCleanSetup/setup.progress";
         private static bool _running;
 
         static JxqyCleanProjectSetup()

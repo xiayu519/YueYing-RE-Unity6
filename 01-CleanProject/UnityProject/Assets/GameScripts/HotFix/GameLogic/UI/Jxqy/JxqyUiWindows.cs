@@ -89,6 +89,57 @@ namespace GameLogic
         {
             button?.onClick.RemoveAllListeners();
         }
+
+        protected void BlockBackdropInside(string panelPath)
+        {
+            Graphic panel = FindChildComponent<Graphic>(panelPath);
+            if (panel == null)
+            {
+                throw new InvalidOperationException(
+                    $"Backdrop content panel is missing: {panelPath}");
+            }
+            panel.raycastTarget = true;
+        }
+    }
+
+    [Window(
+        UILayer.Backdrop,
+        location: "jxqy/ui/prefabs/jxqysharedbackdropui.prefab",
+        packageName: "JxqyPackage")]
+    public sealed class JxqySharedBackdropUI : JxqySessionWindow
+    {
+        private Button _mask;
+
+        protected override void ScriptGenerator()
+        {
+            _mask = FindChildComponent<Button>("m_btn_Mask");
+            if (_mask == null)
+            {
+                throw new InvalidOperationException(
+                    "JxqySharedBackdropUI prefab mask is missing.");
+            }
+            _mask.onClick.AddListener(CloseCurrentScreen);
+        }
+
+        protected override void RefreshView()
+        {
+            if (_mask != null)
+            {
+                _mask.interactable =
+                    Session?.SharedBackdropScreen.HasValue == true;
+            }
+        }
+
+        protected override void OnDestroy()
+        {
+            ClearButton(_mask);
+            _mask = null;
+        }
+
+        private void CloseCurrentScreen()
+        {
+            Session?.CloseSharedBackdropScreen();
+        }
     }
 
     [Window(
@@ -1262,6 +1313,7 @@ namespace GameLogic
         private Text _evade;
         protected override void ScriptGenerator()
         {
+            BlockBackdropInside("m_raw_Panel");
             _panel = FindChildComponent<RawImage>("m_raw_Panel");
             if (_panel != null)
             {
@@ -1371,6 +1423,7 @@ namespace GameLogic
 
         protected override void ScriptGenerator()
         {
+            BlockBackdropInside("m_raw_Panel");
             _text = FindChildComponent<Text>("m_text_Memo");
             RectTransform track =
                 FindChildComponent<RectTransform>("m_img_ScrollTrack");
@@ -1492,6 +1545,7 @@ namespace GameLogic
 
         protected override void ScriptGenerator()
         {
+            BlockBackdropInside("m_raw_Panel");
             _money = FindChildComponent<Text>("m_text_Money");
             _description = FindChildComponent<Text>("m_text_Description");
             _previous = FindChildComponent<Button>("m_btn_PreviousPage");
@@ -1745,8 +1799,11 @@ namespace GameLogic
 
     public abstract class JxqyLegacyDetailWindow : UIWindow
     {
+        private static readonly Color InteractiveMaskColor =
+            new Color(0f, 0f, 0f, 0.5f);
         private JxqyLegacyTooltipBinding _detail;
         private Button _mask;
+        private Image _maskImage;
         private JxqyPointerClickRelay _maskClickRelay;
         private Graphic[] _graphics;
         private bool[] _defaultRaycastTargets;
@@ -1758,6 +1815,8 @@ namespace GameLogic
         {
             _detail = new JxqyLegacyTooltipBinding(transform);
             _mask = FindChildComponent<Button>("m_btn_Mask");
+            _maskImage = _mask?.targetGraphic as Image ??
+                         _mask?.GetComponent<Image>();
             _mask?.onClick.AddListener(CloseDetail);
             if (_mask != null)
             {
@@ -1792,6 +1851,7 @@ namespace GameLogic
             _detail = null;
             _graphics = null;
             _defaultRaycastTargets = null;
+            _maskImage = null;
             DetailData = null;
         }
 
@@ -1876,6 +1936,10 @@ namespace GameLogic
             }
             if (_mask != null)
                 _mask.interactable = enabled;
+            if (_maskImage != null)
+                _maskImage.color = enabled
+                    ? InteractiveMaskColor
+                    : Color.clear;
         }
 
         private void ClearCloseButton()
@@ -1942,6 +2006,7 @@ namespace GameLogic
         protected override void ScriptGenerator()
         {
             RemoveEmbeddedInventoryPanel();
+            BlockBackdropInside("m_raw_EquipmentPanel");
             _equipmentPanel =
                 FindChildComponent<RawImage>("m_raw_EquipmentPanel");
             if (_equipmentPanel != null)
@@ -2234,6 +2299,7 @@ namespace GameLogic
 
         protected override void ScriptGenerator()
         {
+            BlockBackdropInside("m_raw_Panel");
             _cultivation =
                 CreateWidget<JxqyListSlotWidget>(
                     "m_item_Cultivation");
@@ -2366,6 +2432,7 @@ namespace GameLogic
 
         protected override void ScriptGenerator()
         {
+            BlockBackdropInside("m_raw_Panel");
             BuildSkillScrollBar();
             _description = FindChildComponent<Text>("m_text_Description");
             _level = FindChildComponent<Text>("m_text_Level");
@@ -3074,6 +3141,7 @@ namespace GameLogic
 
         protected override void ScriptGenerator()
         {
+            BlockBackdropInside("m_raw_Panel");
             _saveLoad = FindChildComponent<Button>("m_btn_SaveLoad");
             _option = FindChildComponent<Button>("m_btn_Option");
             _quit = FindChildComponent<Button>("m_btn_Quit");
@@ -3299,6 +3367,7 @@ namespace GameLogic
     public sealed class JxqyUiRouter : IDisposable
     {
         private readonly JxqyUiSession _session;
+        private bool _sharedBackdropShown;
         private JxqyUiScreen? _shownModal;
         private JxqyUiScreen? _shownLeftPanel;
         private JxqyUiScreen? _shownRightPanel;
@@ -3326,6 +3395,11 @@ namespace GameLogic
         public void Dispose()
         {
             _session.Changed -= Synchronize;
+            if (_sharedBackdropShown)
+            {
+                _sharedBackdropShown = false;
+                GameModule.UI.CloseUI<JxqySharedBackdropUI>();
+            }
             CloseModal(_shownModal);
             CloseModal(_shownLeftPanel);
             CloseModal(_shownRightPanel);
@@ -3370,6 +3444,8 @@ namespace GameLogic
             }
             JxqyUiScreen? desiredModal =
                 _session.ActiveModalScreen;
+            SynchronizeSharedBackdrop(
+                _session.SharedBackdropScreen.HasValue);
             bool modalVisible = desiredModal.HasValue;
             SynchronizeWindow(
                 ref _shownLeftPanel,
@@ -3378,6 +3454,21 @@ namespace GameLogic
                 ref _shownRightPanel,
                 modalVisible ? null : _session.RightPanelScreen);
             SynchronizeWindow(ref _shownModal, desiredModal);
+        }
+
+        private void SynchronizeSharedBackdrop(bool shouldShow)
+        {
+            if (_sharedBackdropShown == shouldShow)
+                return;
+            _sharedBackdropShown = shouldShow;
+            if (shouldShow)
+            {
+                GameModule.UI.ShowUIAsync<JxqySharedBackdropUI>(_session);
+            }
+            else
+            {
+                GameModule.UI.CloseUI<JxqySharedBackdropUI>();
+            }
         }
 
         private void SynchronizeWindow(
